@@ -2,18 +2,18 @@
 
 **Windows-style window preview for macOS Dock.**
 
-Dock 아이콘을 클릭하면 해당 앱의 모든 윈도우를 썸네일로 미리보기 할 수 있습니다.
-원하는 창만 골라서 전환하세요.
+Click any Dock icon to see thumbnail previews of all open windows for that app.
+Pick the exact window you want — no more cycling through them all.
 
 ![macOS](https://img.shields.io/badge/macOS-14.0%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
-- **Window Preview** — Dock 아이콘 클릭 시 해당 앱의 모든 윈도우 썸네일을 표시
-- **Single Window Activation** — 썸네일을 클릭하면 해당 윈도우만 활성화 (전체화면 Space 전환 포함)
-- **Live Preview on Hover** — 썸네일 위에 마우스를 올리면 실제 윈도우 위치에 미리보기 오버레이 표시
-- **Close from Preview** — 썸네일의 X 버튼으로 프리뷰에서 바로 윈도우 닫기
-- **Configurable** — 썸네일 크기 조절, 윈도우 제목 표시/숨김, 앱별 제외 설정
+- **Window Preview** — Click a Dock icon to see thumbnails of every open window for that app
+- **Single Window Activation** — Click a thumbnail to bring just that window to the front (works with full-screen Spaces too)
+- **Live Preview on Hover** — Hover over a thumbnail to see where the window is on your screen
+- **Close from Preview** — Hit the X button on a thumbnail to close that window directly
+- **Configurable** — Adjust thumbnail size, toggle window titles, exclude specific apps
 
 ## Install
 
@@ -32,45 +32,46 @@ cd dockpeek
 make setup
 ```
 
-> 처음 실행 시 Accessibility 권한을 부여해야 합니다.
-> 이후 `make dev`로 빠르게 다시 빌드할 수 있습니다.
+> On first launch, you'll need to grant Accessibility permission.
+> After that, use `make dev` for fast rebuilds without re-granting.
 
 ## Permissions
 
-DockPeek은 두 가지 시스템 권한이 필요합니다:
+DockPeek requires two system permissions:
 
-| Permission | Purpose | Path |
+| Permission | Why | Where to grant |
 |---|---|---|
-| **Accessibility** | Dock 클릭 감지 및 윈도우 제어 | System Settings → Privacy & Security → Accessibility |
-| **Screen Recording** | 윈도우 썸네일 캡처 | System Settings → Privacy & Security → Screen Recording |
+| **Accessibility** | Detect Dock clicks and control windows | System Settings → Privacy & Security → Accessibility |
+| **Screen Recording** | Capture window thumbnails | System Settings → Privacy & Security → Screen Recording |
 
 ## Usage
 
-1. DockPeek을 실행하면 메뉴바에 아이콘이 나타납니다
-2. 윈도우가 2개 이상 열린 앱의 Dock 아이콘을 클릭하세요
-3. 프리뷰 패널에서 원하는 윈도우를 클릭하면 해당 윈도우만 활성화됩니다
-4. 썸네일 위에 마우스를 올리면 실제 화면 위치에 미리보기가 표시됩니다
-5. X 버튼으로 프리뷰에서 바로 윈도우를 닫을 수 있습니다
+1. Launch DockPeek — a menubar icon appears
+2. Click any Dock icon for an app with 2+ windows
+3. A preview panel pops up with thumbnails of all windows
+4. Click a thumbnail to switch to that window
+5. Hover a thumbnail to see a live preview overlay at the window's actual position
+6. Click the X button to close a window right from the panel
 
-> 윈도우가 1개인 앱은 기존 Dock 동작 그대로 작동합니다.
+> Apps with only one window behave normally — DockPeek stays out of the way.
 
 ## Settings
 
-메뉴바 아이콘을 클릭하면 설정 패널이 열립니다:
+Click the menubar icon to open the settings popover:
 
-- **Enable DockPeek** — 기능 켜기/끄기
-- **Thumbnail size** — 미리보기 크기 조절 (120~360px)
-- **Show window titles** — 썸네일 아래 제목 표시
-- **Live preview on hover** — 호버 시 실제 윈도우 위치에 오버레이 표시
-- **Excluded Apps** — 특정 앱 제외 (Bundle ID 기반)
+- **Enable DockPeek** — Toggle the feature on/off
+- **Thumbnail size** — Adjust preview size (120–360px)
+- **Show window titles** — Display titles below thumbnails
+- **Live preview on hover** — Show overlay at the window's screen position on hover
+- **Excluded Apps** — Skip specific apps by Bundle ID
 
 ## How It Works
 
-1. `CGEventTap`으로 전역 클릭 이벤트를 감지합니다
-2. 클릭 위치가 Dock 영역인지 빠르게 판별합니다
-3. Accessibility API로 Dock 아이콘의 앱을 식별합니다
-4. 해당 앱의 윈도우 목록을 조회하고 썸네일을 캡처합니다
-5. 프리뷰 패널을 표시하고, 선택 시 SkyLight Private API로 해당 윈도우만 활성화합니다
+1. A `CGEventTap` intercepts global left-click events
+2. A fast geometric check determines if the click is in the Dock area
+3. Accessibility API identifies which app icon was clicked
+4. Window list and thumbnails are captured via `CGWindowListCreateImage`
+5. A floating preview panel is displayed, and selecting a window activates it via the SkyLight private API (same approach as AltTab)
 
 ## Project Structure
 
@@ -101,18 +102,18 @@ DockPeek/
 ## Development
 
 ```bash
-make setup      # 첫 설치: 빌드 → /Applications 복사 → 실행
-make dev        # 개발 중: 바이너리만 교체 (권한 유지)
-make kill       # 실행 중인 DockPeek 종료
-make dist       # 배포용 zip 생성
-make clean      # 빌드 산출물 정리
+make setup      # First time: build → install to /Applications → launch
+make dev        # Dev loop: swap binary in-place (permissions preserved)
+make kill       # Stop running DockPeek
+make dist       # Build release zip for distribution
+make clean      # Remove build artifacts
 ```
 
 ## Known Limitations
 
-- macOS에는 공식 Dock 클릭 API가 없어 Accessibility 기반 hit-test를 사용합니다
-- `CGWindowListCreateImage`는 macOS 14부터 deprecated 되었지만 현재까지 정상 작동합니다
-- Dock 자동 숨김 사용 시 타이밍에 따라 감지가 안 될 수 있습니다
+- macOS has no official Dock click API — DockPeek relies on Accessibility hit-testing, which may change across OS versions
+- `CGWindowListCreateImage` is deprecated since macOS 14 but still works; future versions may require ScreenCaptureKit migration
+- Auto-hide Dock can cause timing edge cases where the hit-test misses
 
 ## License
 
