@@ -1,0 +1,8 @@
+build/
+DerivedData/
+DockPeek.xcodeproj/
+DockPeek.zip
+*.xcuserdata
+*.xcworkspace
+.DS_Store
+.omc/
