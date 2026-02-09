@@ -29,6 +29,9 @@ brew tap ongjin/dockpeek
 brew install --cask dockpeek
 ```
 
+> **First launch:** macOS will block the app because it is self-signed (not notarized by Apple).
+> Go to **System Settings → Privacy & Security → Security** and click **"Open Anyway"** next to the DockPeek message.
+
 ### Build from Source
 
 ```bash
@@ -37,8 +40,8 @@ cd dockpeek
 make setup
 ```
 
-> On first launch, you'll need to grant Accessibility permission.
-> After that, use `make dev` for fast rebuilds without re-granting.
+> Building from source avoids the Gatekeeper warning entirely.
+> After the first `make setup`, use `make dev` for fast rebuilds without re-granting permissions.
 
 ## Permissions
 
