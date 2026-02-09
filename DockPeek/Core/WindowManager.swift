@@ -33,6 +33,8 @@ final class WindowManager {
     // MARK: - Window Enumeration
 
     /// Enumerate windows for an app. Only returns on-screen (visible) windows by default.
+    /// Cross-references CGWindow list with AXUIElement windows to filter out
+    /// overlays, helper windows, and other non-standard windows (e.g. Chrome translation bar).
     func windowsForApp(pid: pid_t, includeMinimized: Bool = false) -> [WindowInfo] {
         guard let list = CGWindowListCopyWindowInfo(
             [.optionAll, .excludeDesktopElements], kCGNullWindowID
@@ -74,8 +76,48 @@ final class WindowManager {
             ))
         }
 
+        // Cross-reference with AX windows to filter out overlays/helper windows.
+        // AX kAXWindowsAttribute only returns "real" user-facing windows,
+        // excluding Chrome translation bars, tooltips, popovers, etc.
+        let axIDs = axWindowIDs(for: pid)
+        if !axIDs.isEmpty {
+            let before = windows.count
+            windows = windows.filter { axIDs.contains($0.id) }
+            if windows.count != before {
+                dpLog("AX filter: \(before) → \(windows.count) windows for PID \(pid)")
+            }
+        }
+
         dpLog("Found \(windows.count) windows for PID \(pid) (includeMinimized=\(includeMinimized))")
         return windows
+    }
+
+    /// Get the set of CGWindowIDs that correspond to real standard AX windows.
+    /// Filters out popups, dialogs, floating panels, overlays (e.g. Chrome translation bar).
+    private func axWindowIDs(for pid: pid_t) -> Set<CGWindowID> {
+        guard let getWindow = _axGetWindow else { return [] }
+        let axApp = AXUIElementCreateApplication(pid)
+        var ref: AnyObject?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &ref) == .success,
+              let axWindows = ref as? [AXUIElement] else { return [] }
+
+        var ids = Set<CGWindowID>()
+        for axWin in axWindows {
+            // Only include standard windows (skip dialogs, floating panels, popups)
+            var subroleRef: AnyObject?
+            AXUIElementCopyAttributeValue(axWin, kAXSubroleAttribute as CFString, &subroleRef)
+            let subrole = subroleRef as? String ?? ""
+            guard subrole == "AXStandardWindow" else {
+                dpLog("AX skip subrole=\(subrole) for PID \(pid)")
+                continue
+            }
+
+            var wid: CGWindowID = 0
+            if getWindow(axWin, &wid) == .success, wid != 0 {
+                ids.insert(wid)
+            }
+        }
+        return ids
     }
 
     // MARK: - Thumbnails

@@ -3,17 +3,28 @@ import ServiceManagement
 
 struct SettingsView: View {
     @ObservedObject var appState: AppState
-    @State private var newExcludedID = ""
+    @State private var langRefresh = UUID()
 
     var body: some View {
+        TabView {
+            generalTab
+                .tabItem { Label(L10n.general, systemImage: "gear") }
+            appearanceTab
+                .tabItem { Label(L10n.appearance, systemImage: "paintbrush") }
+            aboutTab
+                .tabItem { Label(L10n.about, systemImage: "info.circle") }
+        }
+        .padding(20)
+        .frame(width: 480, height: 520)
+        .id(langRefresh)
+    }
+
+    // MARK: - General
+
+    private var generalTab: some View {
         VStack(alignment: .leading, spacing: 16) {
-            header
-            Divider()
-            Toggle("Enable DockPeek", isOn: $appState.isEnabled)
-            thumbnailSlider
-            Toggle("Show window titles", isOn: $appState.showWindowTitles)
-            Toggle("Live preview on hover", isOn: $appState.livePreviewOnHover)
-            Toggle("Launch at login", isOn: $appState.launchAtLogin)
+            Toggle(L10n.enableDockPeek, isOn: $appState.isEnabled)
+            Toggle(L10n.launchAtLogin, isOn: $appState.launchAtLogin)
                 .onChange(of: appState.launchAtLogin) { _, newValue in
                     if newValue {
                         try? SMAppService.mainApp.register()
@@ -21,40 +32,147 @@ struct SettingsView: View {
                         try? SMAppService.mainApp.unregister()
                     }
                 }
-            Toggle("Force new windows to primary display", isOn: $appState.forceNewWindowsToPrimary)
+            Toggle(L10n.forceNewWindowsToPrimary, isOn: $appState.forceNewWindowsToPrimary)
+
             Divider()
-            exclusionList
+
+            // Language picker
+            HStack {
+                Text(L10n.language)
+                Spacer()
+                Picker("", selection: $appState.language) {
+                    ForEach(Language.allCases, id: \.rawValue) { lang in
+                        Text(lang.displayName).tag(lang.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+                .onChange(of: appState.language) { _, _ in
+                    langRefresh = UUID()
+                }
+            }
+
             Divider()
+
+            // Permissions
             permissionStatus
-            quitButton
-        }
-        .padding(16)
-        .frame(width: 300)
-    }
 
-    // MARK: - Sections
-
-    private var header: some View {
-        HStack {
-            Image(systemName: "dock.rectangle")
-                .font(.title2)
-                .foregroundColor(.accentColor)
-            Text("DockPeek").font(.headline)
             Spacer()
         }
+        .padding(.top, 8)
     }
 
-    private var thumbnailSlider: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Thumbnail size: \(Int(appState.thumbnailSize))px")
+    // MARK: - Appearance
+
+    private var appearanceTab: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(L10n.thumbnailSize): \(Int(appState.thumbnailSize))px")
+                    .font(.caption).foregroundColor(.secondary)
+                Slider(value: $appState.thumbnailSize, in: 120...360, step: 20)
+            }
+
+            Toggle(L10n.showWindowTitles, isOn: $appState.showWindowTitles)
+            Toggle(L10n.livePreviewOnHover, isOn: $appState.livePreviewOnHover)
+
+            Spacer()
+        }
+        .padding(.top, 8)
+    }
+
+    // MARK: - About
+
+    private var aboutTab: some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            // App icon + name + version
+            VStack(spacing: 8) {
+                Image(systemName: "dock.rectangle")
+                    .font(.system(size: 48))
+                    .foregroundColor(.accentColor)
+                Text("DockPeek")
+                    .font(.title2.bold())
+                Text("\(L10n.version) \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Divider()
+
+            // Buy me a coffee
+            VStack(spacing: 8) {
+                Text(L10n.buyMeACoffeeDesc)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Button(action: {
+                    if let url = URL(string: "https://buymeacoffee.com/zerry") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "cup.and.saucer.fill")
+                        Text(L10n.buyMeACoffee)
+                    }
+                }
+                .controlSize(.large)
+            }
+
+            // GitHub link
+            Button(action: {
+                if let url = URL(string: "https://github.com/ongjin/dockpeek") {
+                    NSWorkspace.shared.open(url)
+                }
+            }) {
+                HStack {
+                    Image(systemName: "link")
+                    Text(L10n.gitHub)
+                }
+            }
+            .buttonStyle(.link)
+
+            Divider()
+
+            // Excluded apps
+            exclusionList
+
+            Spacer()
+
+            // Quit button
+            Button(L10n.quit) {
+                NSApplication.shared.terminate(nil)
+            }
+            .foregroundColor(.red)
+        }
+        .padding(.top, 8)
+    }
+
+    // MARK: - Shared Components
+
+    private var permissionStatus: some View {
+        HStack {
+            Text(L10n.permissions)
                 .font(.caption).foregroundColor(.secondary)
-            Slider(value: $appState.thumbnailSize, in: 120...360, step: 20)
+            Spacer()
+            Circle()
+                .fill(AccessibilityManager.shared.isAccessibilityGranted ? Color.green : Color.red)
+                .frame(width: 8, height: 8)
+            Text(AccessibilityManager.shared.isAccessibilityGranted
+                 ? L10n.accessibilityGranted : L10n.accessibilityRequired)
+                .font(.caption).foregroundColor(.secondary)
+            if !AccessibilityManager.shared.isAccessibilityGranted {
+                Button(L10n.grantPermission) { AccessibilityManager.shared.openAccessibilitySettings() }
+                    .font(.caption)
+            }
         }
     }
+
+    @State private var newExcludedID = ""
 
     private var exclusionList: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Excluded Apps").font(.caption).foregroundColor(.secondary)
+            Text(L10n.excludedApps).font(.caption).foregroundColor(.secondary)
 
             ForEach(Array(appState.excludedBundleIDs.sorted()), id: \.self) { bid in
                 HStack {
@@ -72,9 +190,9 @@ struct SettingsView: View {
             }
 
             HStack {
-                TextField("com.example.app", text: $newExcludedID)
+                TextField(L10n.addPlaceholder, text: $newExcludedID)
                     .textFieldStyle(.roundedBorder).font(.caption)
-                Button("Add") {
+                Button(L10n.add) {
                     let t = newExcludedID.trimmingCharacters(in: .whitespaces)
                     guard !t.isEmpty else { return }
                     var ids = appState.excludedBundleIDs
@@ -84,29 +202,6 @@ struct SettingsView: View {
                 }
                 .disabled(newExcludedID.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-        }
-    }
-
-    private var permissionStatus: some View {
-        HStack {
-            Circle()
-                .fill(AccessibilityManager.shared.isAccessibilityGranted ? Color.green : Color.red)
-                .frame(width: 8, height: 8)
-            Text(AccessibilityManager.shared.isAccessibilityGranted
-                 ? "Accessibility: Granted" : "Accessibility: Required")
-                .font(.caption).foregroundColor(.secondary)
-            if !AccessibilityManager.shared.isAccessibilityGranted {
-                Button("Grant") { AccessibilityManager.shared.openAccessibilitySettings() }
-                    .font(.caption)
-            }
-        }
-    }
-
-    private var quitButton: some View {
-        HStack {
-            Spacer()
-            Button("Quit DockPeek") { NSApplication.shared.terminate(nil) }
-                .font(.caption)
         }
     }
 }

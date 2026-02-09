@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegate, NSWindowDelegate {
 
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
+    private var settingsWindow: NSWindow?
     private let appState = AppState()
     private let eventTapManager = EventTapManager()
     private let dockInspector = DockAXInspector()
@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
-        setupPopover()
+        setupCmdCommaShortcut()
         setupNewWindowObserver()
 
         if AccessibilityManager.shared.isAccessibilityGranted {
@@ -40,28 +40,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "macwindow.on.rectangle",
                                    accessibilityDescription: "DockPeek")
-            button.action = #selector(togglePopover)
+            button.action = #selector(showMenu)
             button.target = self
         }
     }
 
-    // MARK: - Popover
+    // MARK: - Menu
 
-    private func setupPopover() {
-        popover = NSPopover()
-        popover.contentSize = NSSize(width: 300, height: 420)
-        popover.behavior = .transient
-        popover.contentViewController = NSHostingController(
-            rootView: SettingsView(appState: appState)
-        )
+    @objc private func showMenu() {
+        let menu = NSMenu()
+        menu.addItem(withTitle: L10n.settings, action: #selector(openSettings), keyEquivalent: ",")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: L10n.aboutDockPeek, action: #selector(openAbout), keyEquivalent: "")
+        menu.addItem(withTitle: L10n.quitDockPeek, action: #selector(quitApp), keyEquivalent: "q")
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        // Clear menu so subsequent clicks trigger action again
+        DispatchQueue.main.async { self.statusItem.menu = nil }
     }
 
-    @objc private func togglePopover() {
-        if popover.isShown {
-            popover.performClose(nil)
-        } else if let button = statusItem.button {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
+    }
+
+    @objc private func openAbout() {
+        NSApp.orderFrontStandardAboutPanel(nil)
+        NSApp.activate()
+    }
+
+    // MARK: - Settings Window
+
+    @objc func openSettings() {
+        if let window = settingsWindow, window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            return
         }
+
+        // Show in Dock while settings window is open
+        NSApp.setActivationPolicy(.regular)
+
+        let settingsView = SettingsView(appState: appState)
+        let hostingView = NSHostingView(rootView: settingsView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 480, height: 520)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        window.title = "DockPeek \(L10n.general)"
+        window.contentView = hostingView
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        settingsWindow = window
+    }
+
+    // MARK: - Cmd+, Shortcut
+
+    private func setupCmdCommaShortcut() {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," {
+                self?.openSettings()
+                return nil
+            }
+            return event
+        }
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        // Hide from Dock when settings window closes
+        NSApp.setActivationPolicy(.accessory)
     }
 
     // MARK: - Onboarding

@@ -10,6 +10,7 @@ final class AppState: ObservableObject {
     @AppStorage("launchAtLogin") var launchAtLogin = false
     @AppStorage("forceNewWindowsToPrimary") var forceNewWindowsToPrimary = false
     @AppStorage("excludedBundleIDs") var excludedBundleIDsRaw = ""
+    @AppStorage("appLanguage") var language: String = "en"
 
     var excludedBundleIDs: Set<String> {
         get {
