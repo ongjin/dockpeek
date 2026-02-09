@@ -15,15 +15,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var lastClickTime: Date = .distantPast
     private let debounceInterval: TimeInterval = 0.3
     private var accessibilityTimer: Timer?
+    private var axObservers: [pid_t: AXObserver] = [:]
 
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPopover()
+        setupNewWindowObserver()
 
         if AccessibilityManager.shared.isAccessibilityGranted {
             startEventTap()
+            startPermissionMonitor()
         } else {
             showOnboarding()
             startAccessibilityPolling()
@@ -35,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "dock.rectangle",
+            button.image = NSImage(systemSymbolName: "macwindow.on.rectangle",
                                    accessibilityDescription: "DockPeek")
             button.action = #selector(togglePopover)
             button.target = self
@@ -86,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 self.startEventTap()
                 timer.invalidate()
                 self.accessibilityTimer = nil
+                self.startPermissionMonitor()
             }
         }
     }
@@ -96,6 +100,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         eventTapManager.delegate = self
         eventTapManager.start()
         dpLog("Event tap delegate connected")
+    }
+
+    // MARK: - Permission Monitor
+
+    private var permissionMonitorTimer: Timer?
+
+    /// Periodically checks if accessibility permission is still granted.
+    /// If revoked, stops the event tap immediately to prevent system-wide input freeze.
+    private func startPermissionMonitor() {
+        permissionMonitorTimer?.invalidate()
+        permissionMonitorTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
+            [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            if !AccessibilityManager.shared.isAccessibilityGranted {
+                dpLog("Permission revoked — stopping event tap")
+                self.eventTapManager.stop()
+                timer.invalidate()
+                self.permissionMonitorTimer = nil
+                // Resume polling so we can restart when permission is re-granted
+                self.startAccessibilityPolling()
+            }
+        }
     }
 
     // MARK: - EventTapManagerDelegate
@@ -128,11 +154,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         // Hit-test the Dock (AX call — only runs for Dock area clicks)
         guard let dockApp = dockInspector.appAtPoint(point) else { return false }
-        guard dockApp.isRunning, let pid = dockApp.pid else { return false }
+
+        // App not running → Dock will launch it. Warp cursor to primary
+        // BEFORE the click reaches Dock so macOS natively places the window there.
+        guard dockApp.isRunning, let pid = dockApp.pid else {
+            if appState.forceNewWindowsToPrimary {
+                warpCursorToPrimaryBriefly()
+            }
+            return false
+        }
         if appState.isExcluded(bundleID: dockApp.bundleIdentifier) { return false }
 
         // Count windows (fast — no thumbnails yet)
         let windows = windowManager.windowsForApp(pid: pid)
+
+        // Running app with < 2 windows: Dock click will create/activate a window.
+        // Warp cursor so the new window appears on primary.
+        if windows.count < 2, appState.forceNewWindowsToPrimary {
+            warpCursorToPrimaryBriefly()
+            return false
+        }
+
         guard windows.count >= 2 else { return false }
 
         // Suppress click and show preview asynchronously
@@ -141,6 +183,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             self?.showPreviewForWindows(windows, at: point)
         }
         return true
+    }
+
+    // MARK: - Cursor Warp (Primary Screen Enforcement)
+
+    private var cursorRestoreTask: DispatchWorkItem?
+
+    /// Warp cursor to primary screen center so macOS places the new window there.
+    /// Called BEFORE the click reaches the Dock — the window is created natively on primary.
+    /// Cursor is restored after the app window appears.
+    private func warpCursorToPrimaryBriefly() {
+        guard let primary = NSScreen.screens.first else { return }
+        let pH = primary.frame.height
+
+        // Save current position (Cocoa → CG)
+        let savedCocoa = NSEvent.mouseLocation
+        let savedCG = CGPoint(x: savedCocoa.x, y: pH - savedCocoa.y)
+        let primaryCenter = CGPoint(x: primary.frame.midX, y: pH / 2)
+
+        // Already on primary? Skip.
+        let primaryCG = CGRect(x: primary.frame.minX, y: pH - primary.frame.maxY,
+                               width: primary.frame.width, height: primary.frame.height)
+        if primaryCG.contains(savedCG) { return }
+
+        dpLog("Warping cursor to primary center for window placement")
+
+        // 1. Warp cursor position
+        CGWarpMouseCursorPosition(primaryCenter)
+
+        // 2. Post synthetic mouse-move event so macOS fully registers the new position.
+        //    CGWarpMouseCursorPosition alone may not update all internal tracking.
+        if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                   mouseCursorPosition: primaryCenter, mouseButton: .left) {
+            moveEvent.post(tap: .cghidEventTap)
+        }
+
+        // Restore cursor after window has been placed
+        cursorRestoreTask?.cancel()
+        let task = DispatchWorkItem {
+            CGWarpMouseCursorPosition(savedCG)
+            if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                          mouseCursorPosition: savedCG, mouseButton: .left) {
+                restoreEvent.post(tap: .cghidEventTap)
+            }
+        }
+        cursorRestoreTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: task)
     }
 
     // MARK: - Dock Area Detection
@@ -172,6 +260,127 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     // MARK: - Preview
 
+    // MARK: - New Window → Primary Screen
+
+    private func setupNewWindowObserver() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(appDidLaunch(_:)),
+            name: NSWorkspace.didLaunchApplicationNotification, object: nil
+        )
+    }
+
+    @objc private func appDidLaunch(_ note: Notification) {
+        guard appState.forceNewWindowsToPrimary else { return }
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        let pid = app.processIdentifier
+        if app.bundleIdentifier == Bundle.main.bundleIdentifier { return }
+
+        dpLog("appDidLaunch: \(app.localizedName ?? "?") pid=\(pid)")
+
+        // Backup: AXObserver for apps launched via Spotlight/Launchpad (not through Dock click).
+        // The primary strategy (cursor warp in event tap) handles Dock launches.
+        let callback: AXObserverCallback = { _, element, _, _ in
+            guard let primary = NSScreen.screens.first else { return }
+            let pH = primary.frame.height
+            let vis = primary.visibleFrame
+            let primaryCG = CGRect(x: primary.frame.minX, y: pH - primary.frame.maxY,
+                                   width: primary.frame.width, height: primary.frame.height)
+
+            // Try element as window first, fall back to focused window
+            var axWin: AXUIElement = element
+            var posRef: AnyObject?
+            if AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) != .success {
+                var focusedRef: AnyObject?
+                AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &focusedRef)
+                guard let focused = focusedRef else { return }
+                axWin = focused as! AXUIElement
+                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
+            }
+
+            var curPos = CGPoint.zero
+            if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &curPos) }
+            if primaryCG.contains(curPos) { return }
+
+            var sizeRef: AnyObject?
+            AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
+            var winSize = CGSize(width: 800, height: 600)
+            if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &winSize) }
+
+            var newPos = CGPoint(
+                x: vis.minX + (vis.width - winSize.width) / 2,
+                y: (pH - vis.maxY) + (vis.height - winSize.height) / 2
+            )
+            if let axPos = AXValueCreate(.cgPoint, &newPos) {
+                AXUIElementSetAttributeValue(axWin, kAXPositionAttribute as CFString, axPos)
+            }
+        }
+
+        var observer: AXObserver?
+        guard AXObserverCreate(pid, callback, &observer) == .success,
+              let observer else { return }
+
+        let axApp = AXUIElementCreateApplication(pid)
+        AXObserverAddNotification(observer, axApp, kAXWindowCreatedNotification as CFString, nil)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        axObservers[pid] = observer
+
+        // Aggressive polling backup: check every 50ms for 2 seconds
+        // AXObserver alone is unreliable — this catches windows the observer misses
+        let axAppRef = axApp
+        for i in 1...40 {
+            let delay = Double(i) * 0.05
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard self?.appState.forceNewWindowsToPrimary == true else { return }
+                self?.moveAppWindowToPrimaryIfNeeded(axApp: axAppRef)
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.removeAXObserver(pid: pid)
+        }
+    }
+
+    /// Move the focused window of an app to primary screen if it's not already there.
+    private func moveAppWindowToPrimaryIfNeeded(axApp: AXUIElement) {
+        guard let primary = NSScreen.screens.first else { return }
+        let pH = primary.frame.height
+        let vis = primary.visibleFrame
+        let primaryCG = CGRect(x: primary.frame.minX, y: pH - primary.frame.maxY,
+                               width: primary.frame.width, height: primary.frame.height)
+
+        var focusedRef: AnyObject?
+        AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedRef)
+        guard let focused = focusedRef else { return }
+        let win = focused as! AXUIElement
+
+        var posRef: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef)
+        var pos = CGPoint.zero
+        if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+        guard !primaryCG.contains(pos) else { return }
+
+        var sizeRef: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef)
+        var sz = CGSize(width: 800, height: 600)
+        if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &sz) }
+
+        var newPos = CGPoint(
+            x: vis.minX + (vis.width - sz.width) / 2,
+            y: (pH - vis.maxY) + (vis.height - sz.height) / 2
+        )
+        if let axPos = AXValueCreate(.cgPoint, &newPos) {
+            AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, axPos)
+            dpLog("Polled and moved window to primary")
+        }
+    }
+
+    private func removeAXObserver(pid: pid_t) {
+        guard let observer = axObservers.removeValue(forKey: pid) else { return }
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+    }
+
+    // MARK: - Preview
+
     private func showPreviewForWindows(_ windows: [WindowInfo], at point: CGPoint) {
         let thumbSize = CGFloat(appState.thumbnailSize)
         var enriched = windows
@@ -192,7 +401,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             onClose: { [weak self] win in
                 self?.highlightOverlay.hide()
                 self?.windowManager.closeWindow(windowID: win.id, pid: win.ownerPID)
-                // Refresh preview after short delay to let window close
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     guard let self else { return }
                     let remaining = self.windowManager.windowsForApp(pid: win.ownerPID)
@@ -202,6 +410,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                         self.showPreviewForWindows(remaining, at: point)
                     }
                 }
+            },
+            onSnap: { [weak self] win, position in
+                self?.highlightOverlay.hide()
+                self?.previewPanel.dismissPanel(animated: false)
+                self?.windowManager.snapWindow(windowID: win.id, pid: win.ownerPID, position: position)
             },
             onDismiss: { [weak self] in
                 self?.highlightOverlay.hide()

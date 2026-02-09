@@ -22,6 +22,8 @@ private let _axGetWindow: AXUIElementGetWindowFn? = {
     return unsafeBitCast(sym, to: AXUIElementGetWindowFn.self)
 }()
 
+enum SnapPosition { case left, right, fill }
+
 final class WindowManager {
 
     /// Thumbnail cache: windowID → (image, timestamp)
@@ -259,5 +261,113 @@ final class WindowManager {
         let closeButton = closeRef as! AXUIElement
         AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
         dpLog("Closed window \(windowID)")
+    }
+
+    // MARK: - Window Snapping
+
+    func snapWindow(windowID: CGWindowID, pid: pid_t, position: SnapPosition) {
+        let axApp = AXUIElementCreateApplication(pid)
+
+        var windowsRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let axWindows = windowsRef as? [AXUIElement] else { return }
+
+        var target: AXUIElement?
+        if let getWindow = _axGetWindow {
+            for axWin in axWindows {
+                var axWID: CGWindowID = 0
+                if getWindow(axWin, &axWID) == .success, axWID == windowID {
+                    target = axWin
+                    break
+                }
+            }
+        }
+        guard let axWindow = target else { return }
+
+        // Get current window position to determine which screen it's on
+        var posRef: AnyObject?
+        AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &posRef)
+        var currentPos = CGPoint.zero
+        if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &currentPos) }
+
+        let primaryH = NSScreen.screens[0].frame.height
+        let screen = NSScreen.screens.first { s in
+            let f = s.frame
+            let cgFrame = CGRect(x: f.minX, y: primaryH - f.maxY, width: f.width, height: f.height)
+            return cgFrame.contains(currentPos)
+        } ?? NSScreen.main!
+
+        let vis = screen.visibleFrame
+        let cgY = primaryH - vis.maxY
+
+        var targetRect: CGRect
+        switch position {
+        case .left:
+            targetRect = CGRect(x: vis.minX, y: cgY, width: vis.width / 2, height: vis.height)
+        case .right:
+            targetRect = CGRect(x: vis.midX, y: cgY, width: vis.width / 2, height: vis.height)
+        case .fill:
+            targetRect = CGRect(x: vis.minX, y: cgY, width: vis.width, height: vis.height)
+        }
+
+        var pos = targetRect.origin
+        var size = targetRect.size
+        if let axPos = AXValueCreate(.cgPoint, &pos) {
+            AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, axPos)
+        }
+        if let axSize = AXValueCreate(.cgSize, &size) {
+            AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, axSize)
+        }
+
+        activateWindow(windowID: windowID, pid: pid)
+        dpLog("Snapped window \(windowID) to \(position)")
+    }
+
+    // MARK: - Move to Primary Screen
+
+    /// Move all windows of an app that are NOT on the primary screen to its center.
+    func moveNewWindowsToPrimary(pid: pid_t) {
+        guard let primary = NSScreen.screens.first else { return }
+        let primaryH = primary.frame.height
+        let primaryCG = CGRect(x: primary.frame.minX,
+                               y: primaryH - primary.frame.maxY,
+                               width: primary.frame.width,
+                               height: primary.frame.height)
+
+        let axApp = AXUIElementCreateApplication(pid)
+        var windowsRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let axWindows = windowsRef as? [AXUIElement] else { return }
+
+        let vis = primary.visibleFrame
+        let targetCGY = primaryH - vis.maxY
+
+        for axWindow in axWindows {
+            // Get current position
+            var posRef: AnyObject?
+            AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &posRef)
+            var currentPos = CGPoint.zero
+            if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &currentPos) }
+
+            // Skip if already on primary screen
+            if primaryCG.contains(currentPos) { continue }
+
+            // Get window size
+            var sizeRef: AnyObject?
+            AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeRef)
+            var winSize = CGSize.zero
+            if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &winSize) }
+
+            // Center on primary screen's visible area
+            var newPos = CGPoint(
+                x: vis.minX + (vis.width - winSize.width) / 2,
+                y: targetCGY + (vis.height - winSize.height) / 2
+            )
+
+            if let axPos = AXValueCreate(.cgPoint, &newPos) {
+                AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, axPos)
+            }
+            dpLog("Moved window to primary screen for PID \(pid)")
+        }
     }
 }

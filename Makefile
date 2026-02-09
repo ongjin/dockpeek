@@ -1,7 +1,7 @@
 SWIFT_FILES := $(shell find DockPeek -name '*.swift' -type f)
 APP_NAME    := DockPeek
 BUNDLE_ID   := com.dockpeek.app
-VERSION     := 1.0.1
+VERSION     := 1.0.0
 TARGET      := arm64-apple-macos14.0
 SWIFT_FLAGS := -swift-version 5 -target $(TARGET) -parse-as-library \
                -framework AppKit -framework SwiftUI \
@@ -43,6 +43,8 @@ dev: kill
 		echo "Error: Run 'make setup' first to install DockPeek.app"; exit 1; \
 	fi
 	@cp build/Debug/$(APP_NAME) "$(INSTALL_BIN)"
+	@cp DockPeek/Info.plist "$(INSTALL_APP)/Contents/Info.plist"
+	@cp DockPeek/Resources/AppIcon.icns "$(INSTALL_APP)/Contents/Resources/AppIcon.icns"
 	@codesign --force --sign "$(SIGN_ID)" "$(INSTALL_APP)"
 	@echo "Binary updated. Launching..."
 	@open "$(INSTALL_APP)"
@@ -58,6 +60,7 @@ build:
 	          build/Debug/$(APP_NAME).app/Contents/Resources
 	swiftc $(SWIFT_FLAGS) -Onone -g -o build/Debug/$(APP_NAME).app/Contents/MacOS/$(APP_NAME) $(SWIFT_FILES)
 	@cp DockPeek/Info.plist build/Debug/$(APP_NAME).app/Contents/Info.plist
+	@cp DockPeek/Resources/AppIcon.icns build/Debug/$(APP_NAME).app/Contents/Resources/AppIcon.icns
 	@codesign --force --sign "$(SIGN_ID)" build/Debug/$(APP_NAME).app
 	@echo "Built: build/Debug/$(APP_NAME).app"
 
@@ -67,6 +70,7 @@ release:
 	swiftc $(SWIFT_FLAGS) -O -whole-module-optimization \
 		-o build/Release/$(APP_NAME).app/Contents/MacOS/$(APP_NAME) $(SWIFT_FILES)
 	@cp DockPeek/Info.plist build/Release/$(APP_NAME).app/Contents/Info.plist
+	@cp DockPeek/Resources/AppIcon.icns build/Release/$(APP_NAME).app/Contents/Resources/AppIcon.icns
 	@codesign --force --sign "$(SIGN_ID)" build/Release/$(APP_NAME).app
 	@echo "Built: build/Release/$(APP_NAME).app"
 

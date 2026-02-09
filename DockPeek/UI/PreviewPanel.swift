@@ -1,10 +1,19 @@
 import AppKit
 import SwiftUI
 
+final class PreviewNavState: ObservableObject {
+    @Published var selectedIndex: Int = -1
+    func reset() { selectedIndex = -1 }
+}
+
 final class PreviewPanel: NSPanel {
 
     private var localMonitor: Any?
     private var globalMonitor: Any?
+    let navState = PreviewNavState()
+    private var storedWindows: [WindowInfo] = []
+    private var storedOnSelect: ((WindowInfo) -> Void)?
+    private var storedOnSnap: ((WindowInfo, SnapPosition) -> Void)?
 
     init() {
         super.init(
@@ -36,17 +45,25 @@ final class PreviewPanel: NSPanel {
         near point: CGPoint,
         onSelect: @escaping (WindowInfo) -> Void,
         onClose: @escaping (WindowInfo) -> Void = { _ in },
+        onSnap: @escaping (WindowInfo, SnapPosition) -> Void = { _, _ in },
         onDismiss: @escaping () -> Void,
         onHoverWindow: @escaping (WindowInfo?) -> Void = { _ in }
     ) {
+        storedWindows = windows
+        storedOnSelect = onSelect
+        storedOnSnap = onSnap
+        navState.reset()
+
         let content = PreviewContentView(
             windows: windows,
             thumbnailSize: thumbnailSize,
             showTitles: showTitles,
             onSelect: onSelect,
             onClose: onClose,
+            onSnap: onSnap,
             onDismiss: onDismiss,
-            onHoverWindow: onHoverWindow
+            onHoverWindow: onHoverWindow,
+            navState: navState
         )
         let hosting = NSHostingView(rootView: AnyView(content))
         contentView = hosting
@@ -155,7 +172,28 @@ final class PreviewPanel: NSPanel {
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) {
             [weak self] event in
             guard let self, self.isVisible else { return event }
-            if event.type == .keyDown, event.keyCode == 53 { onDismiss(); return nil }
+            if event.type == .keyDown {
+                switch event.keyCode {
+                case 53: // Esc
+                    onDismiss(); return nil
+                case 123: // Left arrow
+                    let idx = self.navState.selectedIndex
+                    self.navState.selectedIndex = idx <= 0 ? 0 : idx - 1
+                    return nil
+                case 124: // Right arrow
+                    let idx = self.navState.selectedIndex
+                    let max = self.storedWindows.count - 1
+                    self.navState.selectedIndex = idx < 0 ? 0 : min(idx + 1, max)
+                    return nil
+                case 36: // Enter
+                    let idx = self.navState.selectedIndex
+                    if idx >= 0, idx < self.storedWindows.count {
+                        self.storedOnSelect?(self.storedWindows[idx])
+                    }
+                    return nil
+                default: break
+                }
+            }
             if event.type == .leftMouseDown, event.window != self { onDismiss() }
             return event
         }

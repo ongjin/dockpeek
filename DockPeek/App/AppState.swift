@@ -1,11 +1,14 @@
 import SwiftUI
 import Combine
+import ServiceManagement
 
 final class AppState: ObservableObject {
     @AppStorage("isEnabled") var isEnabled = true
     @AppStorage("thumbnailSize") var thumbnailSize: Double = 200
     @AppStorage("showWindowTitles") var showWindowTitles = true
     @AppStorage("livePreviewOnHover") var livePreviewOnHover = true
+    @AppStorage("launchAtLogin") var launchAtLogin = false
+    @AppStorage("forceNewWindowsToPrimary") var forceNewWindowsToPrimary = false
     @AppStorage("excludedBundleIDs") var excludedBundleIDsRaw = ""
 
     var excludedBundleIDs: Set<String> {

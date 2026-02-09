@@ -13,6 +13,11 @@ Pick the exact window you want — no more cycling through them all.
 - **Single Window Activation** — Click a thumbnail to bring just that window to the front (works with full-screen Spaces too)
 - **Live Preview on Hover** — Hover over a thumbnail to see where the window is on your screen
 - **Close from Preview** — Hit the X button on a thumbnail to close that window directly
+- **Keyboard Navigation** — Use arrow keys to select windows, Enter to activate, Esc to dismiss
+- **Window Snapping** — Snap windows to left half, right half, or full screen from the preview panel
+- **Force Primary Display** — New app windows always open on your primary monitor
+- **Launch at Login** — Start DockPeek automatically when you log in
+- **Safe Permission Handling** — Revoking accessibility permission won't freeze your system
 - **Configurable** — Adjust thumbnail size, toggle window titles, exclude specific apps
 
 ## Install
@@ -52,6 +57,8 @@ DockPeek requires two system permissions:
 4. Click a thumbnail to switch to that window
 5. Hover a thumbnail to see a live preview overlay at the window's actual position
 6. Click the X button to close a window right from the panel
+7. Use arrow keys (←→) to navigate, Enter to activate, Esc to dismiss
+8. Hover over a thumbnail to reveal snap buttons (left half / full / right half)
 
 > Apps with only one window behave normally — DockPeek stays out of the way.
 
@@ -63,15 +70,19 @@ Click the menubar icon to open the settings popover:
 - **Thumbnail size** — Adjust preview size (120–360px)
 - **Show window titles** — Display titles below thumbnails
 - **Live preview on hover** — Show overlay at the window's screen position on hover
+- **Launch at login** — Start DockPeek automatically on login
+- **Force new windows to primary display** — New app windows always open on your main monitor
 - **Excluded Apps** — Skip specific apps by Bundle ID
 
 ## How It Works
 
-1. A `CGEventTap` intercepts global left-click events
+1. A `CGEventTap` (session-level) intercepts global left-click events
 2. A fast geometric check determines if the click is in the Dock area
 3. Accessibility API identifies which app icon was clicked
 4. Window list and thumbnails are captured via `CGWindowListCreateImage`
-5. A floating preview panel is displayed, and selecting a window activates it via the SkyLight private API (same approach as AltTab)
+5. A floating preview panel is displayed with keyboard navigation and snap controls
+6. Selecting a window activates it via the SkyLight private API (same approach as AltTab)
+7. A background watchdog monitors accessibility permission to prevent system freezes if revoked
 
 ## Project Structure
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 
 struct SettingsView: View {
     @ObservedObject var appState: AppState
@@ -12,6 +13,15 @@ struct SettingsView: View {
             thumbnailSlider
             Toggle("Show window titles", isOn: $appState.showWindowTitles)
             Toggle("Live preview on hover", isOn: $appState.livePreviewOnHover)
+            Toggle("Launch at login", isOn: $appState.launchAtLogin)
+                .onChange(of: appState.launchAtLogin) { _, newValue in
+                    if newValue {
+                        try? SMAppService.mainApp.register()
+                    } else {
+                        try? SMAppService.mainApp.unregister()
+                    }
+                }
+            Toggle("Force new windows to primary display", isOn: $appState.forceNewWindowsToPrimary)
             Divider()
             exclusionList
             Divider()

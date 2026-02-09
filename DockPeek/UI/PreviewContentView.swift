@@ -6,15 +6,25 @@ struct PreviewContentView: View {
     let showTitles: Bool
     let onSelect: (WindowInfo) -> Void
     let onClose: (WindowInfo) -> Void
+    let onSnap: (WindowInfo, SnapPosition) -> Void
     let onDismiss: () -> Void
     let onHoverWindow: (WindowInfo?) -> Void
+    @ObservedObject var navState: PreviewNavState
 
     @State private var hoveredID: CGWindowID?
+    @State private var closeHoveredID: CGWindowID?
 
     var body: some View {
         HStack(spacing: 12) {
-            ForEach(windows) { window in
-                windowCard(window)
+            ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
+                windowCard(window, index: index)
+            }
+        }
+        .onChange(of: navState.selectedIndex) { _, newIndex in
+            if newIndex >= 0, newIndex < windows.count {
+                onHoverWindow(windows[newIndex])
+            } else {
+                onHoverWindow(nil)
             }
         }
         .padding(16)
@@ -32,8 +42,10 @@ struct PreviewContentView: View {
     // MARK: - Card
 
     @ViewBuilder
-    private func windowCard(_ w: WindowInfo) -> some View {
+    private func windowCard(_ w: WindowInfo, index: Int) -> some View {
         let hovered = hoveredID == w.id
+        let keySelected = navState.selectedIndex == index
+        let highlighted = hovered || keySelected
 
         VStack(spacing: 6) {
             thumbnailView(w)
@@ -42,26 +54,45 @@ struct PreviewContentView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(
-                            hovered ? Color.accentColor : Color.white.opacity(0.08),
-                            lineWidth: hovered ? 2 : 0.5
+                            keySelected ? Color.accentColor : (hovered ? Color.accentColor : Color.white.opacity(0.08)),
+                            lineWidth: highlighted ? 2 : 0.5
                         )
                 )
                 .overlay(alignment: .topLeading) {
-                    if hovered {
+                    if highlighted {
+                        let closeHovered = closeHoveredID == w.id
                         Button {
                             onClose(w)
                         } label: {
                             ZStack {
                                 Circle()
-                                    .fill(.black.opacity(0.6))
+                                    .fill(closeHovered ? Color.red : Color.black.opacity(0.6))
                                     .frame(width: 22, height: 22)
                                 Image(systemName: "xmark")
                                     .font(.system(size: 11, weight: .bold))
                                     .foregroundColor(.white)
                             }
+                            .scaleEffect(closeHovered ? 1.2 : 1.0)
+                            .animation(.easeOut(duration: 0.12), value: closeHovered)
                         }
                         .buttonStyle(.plain)
+                        .onHover { over in
+                            closeHoveredID = over ? w.id : nil
+                        }
                         .padding(6)
+                        .transition(.opacity)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if highlighted {
+                        HStack(spacing: 6) {
+                            snapButton(icon: "rectangle.lefthalf.filled", position: .left, window: w)
+                            snapButton(icon: "rectangle.inset.filled", position: .fill, window: w)
+                            snapButton(icon: "rectangle.righthalf.filled", position: .right, window: w)
+                        }
+                        .padding(4)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                        .padding(.bottom, 6)
                         .transition(.opacity)
                     }
                 }
@@ -84,16 +115,30 @@ struct PreviewContentView: View {
         .padding(6)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(hovered ? Color.white.opacity(0.1) : Color.clear)
+                .fill(highlighted ? Color.white.opacity(0.1) : Color.clear)
         )
-        .scaleEffect(hovered ? 1.03 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: hovered)
+        .scaleEffect(highlighted ? 1.03 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: highlighted)
         .onHover { over in
             hoveredID = over ? w.id : nil
+            if over { navState.selectedIndex = -1 }
             onHoverWindow(over ? w : nil)
         }
         .onTapGesture { onSelect(w) }
         .accessibilityLabel(w.displayTitle)
+    }
+
+    @ViewBuilder
+    private func snapButton(icon: String, position: SnapPosition, window: WindowInfo) -> some View {
+        Button {
+            onSnap(window, position)
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.9))
+                .frame(width: 24, height: 20)
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder

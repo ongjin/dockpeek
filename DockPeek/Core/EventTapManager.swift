@@ -12,6 +12,7 @@ final class EventTapManager {
     private(set) var isActive = false
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var permissionWatchdog: DispatchSourceTimer?
 
     func start() {
         guard !isActive else { return }
@@ -19,7 +20,7 @@ final class EventTapManager {
         let mask: CGEventMask = (1 << CGEventType.leftMouseDown.rawValue)
 
         guard let tap = CGEvent.tapCreate(
-            tap: .cghidEventTap,
+            tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: mask,
@@ -38,21 +39,60 @@ final class EventTapManager {
             CGEvent.tapEnable(tap: tap, enable: true)
             isActive = true
             dpLog("Event tap started")
+            startPermissionWatchdog()
         }
     }
 
     func stop() {
-        guard isActive else { return }
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-        }
+        stopPermissionWatchdog()
+        emergencyInvalidateTap()
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
         eventTap = nil
         runLoopSource = nil
         isActive = false
-        dpLog("Event tap stopped")
+        dpLog("Event tap stopped and invalidated")
+    }
+
+    /// Immediately invalidate the mach port — safe to call from ANY thread.
+    /// This is the critical operation that unblocks HID events when permission is revoked.
+    fileprivate func emergencyInvalidateTap() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+    }
+
+    // MARK: - Background Permission Watchdog
+
+    /// Monitors accessibility permission from a BACKGROUND thread.
+    /// When the user deletes the permission entry, the main thread may freeze
+    /// because the HID-level event tap blocks all input. A background thread
+    /// is NOT blocked by this, so it can invalidate the tap and unfreeze the system.
+    private func startPermissionWatchdog() {
+        stopPermissionWatchdog()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInteractive))
+        timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
+        timer.setEventHandler { [weak self] in
+            if !AXIsProcessTrusted() {
+                dpLog("Watchdog: permission lost — emergency tap invalidation")
+                // Invalidate from background thread to unblock HID events
+                self?.emergencyInvalidateTap()
+                DispatchQueue.main.async {
+                    self?.stop()
+                }
+                self?.permissionWatchdog?.cancel()
+                self?.permissionWatchdog = nil
+            }
+        }
+        timer.resume()
+        permissionWatchdog = timer
+    }
+
+    private func stopPermissionWatchdog() {
+        permissionWatchdog?.cancel()
+        permissionWatchdog = nil
     }
 
     fileprivate func handleEvent(_ event: CGEvent) -> Bool {
@@ -72,11 +112,26 @@ private func eventTapCallback(
 
     let manager = Unmanaged<EventTapManager>.fromOpaque(userInfo).takeUnretainedValue()
 
+    // SAFETY: If permission was revoked, pass event through and destroy tap immediately.
+    // This prevents system-wide input freeze when the user deletes the permission entry.
+    if !AXIsProcessTrusted() {
+        dpLog("Callback: permission lost — passing event through and destroying tap")
+        manager.emergencyInvalidateTap()
+        return Unmanaged.passUnretained(event)
+    }
+
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        if let tap = manager.eventTap {
-            CGEvent.tapEnable(tap: tap, enable: true)
+        // Permission may have been revoked — check before re-enabling
+        if AXIsProcessTrusted() {
+            if let tap = manager.eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            dpLog("Event tap re-enabled after system disable")
+        } else {
+            // Permission revoked — stop the tap immediately to prevent input freeze
+            dpLog("Accessibility permission lost — stopping event tap to prevent input freeze")
+            DispatchQueue.main.async { manager.stop() }
         }
-        dpLog("Event tap re-enabled after system disable")
         return Unmanaged.passUnretained(event)
     }
 
