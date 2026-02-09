@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private let previewPanel = PreviewPanel()
     private let highlightOverlay = HighlightOverlay()
 
+    private let updateChecker = UpdateChecker.shared
     private var lastClickTime: Date = .distantPast
     private let debounceInterval: TimeInterval = 0.3
     private var accessibilityTimer: Timer?
@@ -30,6 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         } else {
             showOnboarding()
             startAccessibilityPolling()
+        }
+
+        // Auto-check for updates (respects 24-hour cooldown)
+        updateChecker.check(force: false) { [weak self] available in
+            if available { self?.showUpdateAlert() }
         }
     }
 
@@ -50,6 +56,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     @objc private func showMenu() {
         let menu = NSMenu()
         menu.addItem(withTitle: L10n.settings, action: #selector(openSettings), keyEquivalent: ",")
+
+        let updateTitle = updateChecker.updateAvailable
+            ? "\(L10n.checkForUpdates) ●"
+            : L10n.checkForUpdates
+        menu.addItem(withTitle: updateTitle, action: #selector(checkForUpdates), keyEquivalent: "")
+
         menu.addItem(.separator())
         menu.addItem(withTitle: L10n.aboutDockPeek, action: #selector(openAbout), keyEquivalent: "")
         menu.addItem(withTitle: L10n.quitDockPeek, action: #selector(quitApp), keyEquivalent: "q")
@@ -66,6 +78,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     @objc private func openAbout() {
         NSApp.orderFrontStandardAboutPanel(nil)
         NSApp.activate()
+    }
+
+    // MARK: - Update Check
+
+    @objc private func checkForUpdates() {
+        updateChecker.check(force: true) { [weak self] available in
+            if available {
+                self?.showUpdateAlert()
+            } else {
+                self?.showUpToDateAlert()
+            }
+        }
+    }
+
+    private func showUpdateAlert() {
+        let local = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let remote = updateChecker.latestVersion
+
+        let alert = NSAlert()
+        alert.messageText = L10n.updateAvailable
+        alert.informativeText = String(format: L10n.updateMessage, remote, local)
+            + "\n\n" + L10n.brewHint
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: L10n.download)
+        alert.addButton(withTitle: L10n.later)
+
+        NSApp.activate()
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn,
+           let url = URL(string: updateChecker.releaseURL) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func showUpToDateAlert() {
+        let alert = NSAlert()
+        alert.messageText = L10n.upToDate
+        alert.informativeText = L10n.upToDateMessage
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate()
+        alert.runModal()
     }
 
     // MARK: - Settings Window
