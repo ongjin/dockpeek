@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 final class UpdateChecker {
 
@@ -11,6 +11,17 @@ final class UpdateChecker {
     private let repoAPI = "https://api.github.com/repos/ongjin/dockpeek/releases/latest"
     private let lastCheckKey = "lastUpdateCheckTime"
     private let checkInterval: TimeInterval = 24 * 60 * 60 // 24 hours
+
+    /// Resolved Homebrew binary path, or nil if not installed.
+    lazy var brewPath: String? = {
+        let candidates = [
+            "/opt/homebrew/bin/brew",   // Apple Silicon
+            "/usr/local/bin/brew",      // Intel
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }()
+
+    var isBrewInstalled: Bool { brewPath != nil }
 
     private init() {}
 
@@ -63,6 +74,32 @@ final class UpdateChecker {
                 DispatchQueue.main.async { completion(false) }
             }
         }.resume()
+    }
+
+    // MARK: - Brew Upgrade
+
+    /// Launches a detached shell that upgrades DockPeek via Homebrew, then re-opens the app.
+    /// The current process is terminated so Homebrew can replace the app bundle.
+    func performBrewUpgrade() {
+        guard let brew = brewPath else { return }
+
+        // Shell script: upgrade cask, then relaunch. Runs independently of this process.
+        let script = """
+        \(brew) update && \(brew) upgrade --cask dockpeek && open -a DockPeek
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script]
+        // Prevent child from inheriting our stdout/stderr (detach cleanly)
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+
+        // Give the process a moment to start, then quit
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApplication.shared.terminate(nil)
+        }
     }
 
     // MARK: - Semantic Version Comparison

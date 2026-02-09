@@ -95,20 +95,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private func showUpdateAlert() {
         let local = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let remote = updateChecker.latestVersion
+        let hasBrew = updateChecker.isBrewInstalled
 
         let alert = NSAlert()
         alert.messageText = L10n.updateAvailable
         alert.informativeText = String(format: L10n.updateMessage, remote, local)
-            + "\n\n" + L10n.brewHint
+            + (hasBrew ? "\n\n" + L10n.autoUpdateHint : "\n\n" + L10n.brewHint)
         alert.alertStyle = .informational
-        alert.addButton(withTitle: L10n.download)
-        alert.addButton(withTitle: L10n.later)
+
+        if hasBrew {
+            alert.addButton(withTitle: L10n.autoUpdate) // First button
+            alert.addButton(withTitle: L10n.later)
+            alert.addButton(withTitle: L10n.download)   // Fallback
+        } else {
+            alert.addButton(withTitle: L10n.download)
+            alert.addButton(withTitle: L10n.later)
+        }
 
         NSApp.activate()
         let response = alert.runModal()
-        if response == .alertFirstButtonReturn,
-           let url = URL(string: updateChecker.releaseURL) {
-            NSWorkspace.shared.open(url)
+
+        if hasBrew {
+            if response == .alertFirstButtonReturn {
+                updateChecker.performBrewUpgrade()
+            } else if response == .alertThirdButtonReturn,
+                      let url = URL(string: updateChecker.releaseURL) {
+                NSWorkspace.shared.open(url)
+            }
+        } else {
+            if response == .alertFirstButtonReturn,
+               let url = URL(string: updateChecker.releaseURL) {
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 

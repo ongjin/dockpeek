@@ -27,6 +27,8 @@ struct L10n {
     static var checkForUpdates: String { s("checkForUpdates") }
     static var updateAvailable: String { s("updateAvailable") }
     static var updateMessage: String { s("updateMessage") }
+    static var autoUpdate: String { s("autoUpdate") }
+    static var autoUpdateHint: String { s("autoUpdateHint") }
     static var download: String { s("download") }
     static var later: String { s("later") }
     static var brewHint: String { s("brewHint") }
@@ -114,6 +116,8 @@ struct L10n {
         "checkForUpdates": "Check for Updates...",
         "updateAvailable": "Update Available",
         "updateMessage": "DockPeek %@ is available. You are currently on %@.",
+        "autoUpdate": "Update Now",
+        "autoUpdateHint": "Homebrew detected. Click \"Update Now\" to upgrade automatically.",
         "download": "Download",
         "later": "Later",
         "brewHint": "Homebrew: brew update && brew upgrade --cask dockpeek",
@@ -157,6 +161,8 @@ struct L10n {
         "checkForUpdates": "업데이트 확인...",
         "updateAvailable": "업데이트 있음",
         "updateMessage": "DockPeek %@ 버전을 사용할 수 있습니다. 현재 버전: %@",
+        "autoUpdate": "지금 업데이트",
+        "autoUpdateHint": "Homebrew가 감지되었습니다. \"지금 업데이트\"를 누르면 자동으로 업그레이드됩니다.",
         "download": "다운로드",
         "later": "나중에",
         "brewHint": "Homebrew: brew update && brew upgrade --cask dockpeek",
