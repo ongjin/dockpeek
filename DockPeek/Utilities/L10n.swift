@@ -22,6 +22,17 @@ struct L10n {
     static var aboutDockPeek: String { s("aboutDockPeek") }
     static var quitDockPeek: String { s("quitDockPeek") }
 
+    // MARK: - Update
+
+    static var checkForUpdates: String { s("checkForUpdates") }
+    static var updateAvailable: String { s("updateAvailable") }
+    static var updateMessage: String { s("updateMessage") }
+    static var download: String { s("download") }
+    static var later: String { s("later") }
+    static var brewHint: String { s("brewHint") }
+    static var upToDate: String { s("upToDate") }
+    static var upToDateMessage: String { s("upToDateMessage") }
+
     // MARK: - Tabs
 
     static var general: String { s("general") }
@@ -99,6 +110,15 @@ struct L10n {
         "addPlaceholder": "com.example.app",
         "add": "Add",
         "quit": "Quit DockPeek",
+
+        "checkForUpdates": "Check for Updates...",
+        "updateAvailable": "Update Available",
+        "updateMessage": "DockPeek %@ is available. You are currently on %@.",
+        "download": "Download",
+        "later": "Later",
+        "brewHint": "Homebrew: brew update && brew upgrade --cask dockpeek",
+        "upToDate": "Up to Date",
+        "upToDateMessage": "You're running the latest version of DockPeek.",
     ]
 
     // MARK: - Korean
@@ -133,5 +153,14 @@ struct L10n {
         "addPlaceholder": "com.example.app",
         "add": "추가",
         "quit": "DockPeek 종료",
+
+        "checkForUpdates": "업데이트 확인...",
+        "updateAvailable": "업데이트 있음",
+        "updateMessage": "DockPeek %@ 버전을 사용할 수 있습니다. 현재 버전: %@",
+        "download": "다운로드",
+        "later": "나중에",
+        "brewHint": "Homebrew: brew update && brew upgrade --cask dockpeek",
+        "upToDate": "최신 버전",
+        "upToDateMessage": "현재 최신 버전의 DockPeek을 사용 중입니다.",
     ]
 }
