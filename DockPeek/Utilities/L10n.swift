@@ -74,12 +74,10 @@ struct L10n {
     // MARK: - Lookup
 
     private static func s(_ key: String) -> String {
-        let dict: [String: String]
         switch current {
-        case .en: dict = en
-        case .ko: dict = ko
+        case .en: return en[key] ?? key
+        case .ko: return ko[key] ?? key
         }
-        return dict[key] ?? key
     }
 
     // MARK: - English

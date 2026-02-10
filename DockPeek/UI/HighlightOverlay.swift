@@ -7,11 +7,23 @@ final class HighlightOverlay {
 
     private var overlayWindow: NSWindow?
     private var currentWindowID: CGWindowID?
+    private var isHiding = false
 
     func show(for windowInfo: WindowInfo, cachedImage: NSImage? = nil) {
         // Skip if already showing for this window
         if currentWindowID == windowInfo.id { return }
-        hide()
+
+        // If hide animation is in progress, cancel it immediately
+        if isHiding, let window = overlayWindow {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0
+            }
+            window.animator().alphaValue = 0
+            window.orderOut(nil)
+            overlayWindow = nil
+            isHiding = false
+        }
+
         currentWindowID = windowInfo.id
 
         guard let screen = screenForCGRect(windowInfo.bounds) else { return }
@@ -52,27 +64,15 @@ final class HighlightOverlay {
         container.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
         container.layer?.borderWidth = 3
 
-        // Use cached image if available, otherwise capture
-        let displayImage: NSImage?
+        // Use cached image if available, skip re-capture entirely
         if let cachedImage {
-            displayImage = cachedImage
-        } else if let cgImage = CGWindowListCreateImage(
-            .null, .optionIncludingWindow, windowInfo.id,
-            [.boundsIgnoreFraming, .nominalResolution]
-        ) {
-            displayImage = NSImage(cgImage: cgImage, size: cocoaRect.size)
-        } else {
-            displayImage = nil
-        }
-
-        if let displayImage {
             let imageView = NSImageView(frame: NSRect(origin: .zero, size: cocoaRect.size))
-            imageView.image = displayImage
+            imageView.image = cachedImage
             imageView.imageScaling = .scaleProportionallyUpOrDown
             imageView.autoresizingMask = [.width, .height]
             container.addSubview(imageView)
         } else {
-            // Fallback: tinted background
+            // Fallback: tinted background (no CGWindowListCreateImage)
             container.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
         }
 
@@ -91,16 +91,18 @@ final class HighlightOverlay {
     }
 
     func hide() {
-        guard let window = overlayWindow else { return }
+        guard let window = overlayWindow, !isHiding else { return }
+        isHiding = true
         currentWindowID = nil
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.1
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             window.animator().alphaValue = 0
-        }, completionHandler: {
+        }, completionHandler: { [weak self] in
             window.orderOut(nil)
+            self?.overlayWindow = nil
+            self?.isHiding = false
         })
-        overlayWindow = nil
     }
 
     private func screenForCGRect(_ rect: CGRect) -> NSScreen? {

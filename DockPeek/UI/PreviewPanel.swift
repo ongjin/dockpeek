@@ -65,6 +65,7 @@ final class PreviewPanel: NSPanel {
             onHoverWindow: onHoverWindow,
             navState: navState
         )
+        contentView = nil  // Release old hosting view before creating new one
         let hosting = NSHostingView(rootView: AnyView(content))
         contentView = hosting
 
@@ -94,6 +95,10 @@ final class PreviewPanel: NSPanel {
 
     func dismissPanel(animated: Bool = true) {
         removeDismissMonitors()
+        // Clear stored references to break retain cycles
+        storedWindows = []
+        storedOnSelect = nil
+        storedOnSnap = nil
         if animated {
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.12
@@ -102,9 +107,11 @@ final class PreviewPanel: NSPanel {
             }, completionHandler: {
                 self.orderOut(nil)
                 self.alphaValue = 1
+                self.contentView = nil
             })
         } else {
             orderOut(nil)
+            contentView = nil
         }
     }
 
