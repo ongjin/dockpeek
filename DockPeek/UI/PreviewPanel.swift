@@ -14,6 +14,7 @@ final class PreviewPanel: NSPanel {
     private var storedWindows: [WindowInfo] = []
     private var storedOnSelect: ((WindowInfo) -> Void)?
     private var storedOnSnap: ((WindowInfo, SnapPosition) -> Void)?
+    private var dismissGeneration = 0
 
     init() {
         super.init(
@@ -49,6 +50,7 @@ final class PreviewPanel: NSPanel {
         onDismiss: @escaping () -> Void,
         onHoverWindow: @escaping (WindowInfo?) -> Void = { _ in }
     ) {
+        dismissGeneration &+= 1  // Invalidate any pending deferred cleanup
         storedWindows = windows
         storedOnSelect = onSelect
         storedOnSnap = onSnap
@@ -109,9 +111,12 @@ final class PreviewPanel: NSPanel {
                 self.contentView = nil
             })
         } else {
+            let gen = dismissGeneration
             orderOut(nil)
-            // Defer cleanup to let current call stack (e.g. onSelect gesture) complete
+            // Defer cleanup to let current call stack (e.g. onSelect gesture) complete.
+            // Skip if showPreview was called in between (generation changed).
             DispatchQueue.main.async {
+                guard self.dismissGeneration == gen else { return }
                 self.storedWindows = []
                 self.storedOnSelect = nil
                 self.storedOnSnap = nil
