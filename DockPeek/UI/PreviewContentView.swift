@@ -117,8 +117,6 @@ struct PreviewContentView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(highlighted ? Color.white.opacity(0.1) : Color.clear)
         )
-        .scaleEffect(highlighted ? 1.03 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: highlighted)
         .onHover { over in
             hoveredID = over ? w.id : nil
             if over { navState.selectedIndex = -1 }

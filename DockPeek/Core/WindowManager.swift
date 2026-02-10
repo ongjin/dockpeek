@@ -28,7 +28,7 @@ final class WindowManager {
 
     /// Thumbnail cache: windowID → (image, timestamp)
     private var thumbnailCache: [CGWindowID: (NSImage, Date)] = [:]
-    private let cacheTTL: TimeInterval = 0.5
+    private let cacheTTL: TimeInterval = 5.0
 
     // MARK: - Window Enumeration
 
@@ -129,13 +129,15 @@ final class WindowManager {
             return cached.0
         }
 
-        // Prune expired entries
+        // Prune expired entries only when cache is large
         let now = Date()
-        thumbnailCache = thumbnailCache.filter { now.timeIntervalSince($0.value.1) < cacheTTL }
+        if thumbnailCache.count > 20 {
+            thumbnailCache = thumbnailCache.filter { now.timeIntervalSince($0.value.1) < cacheTTL }
+        }
 
         guard let cgImage = CGWindowListCreateImage(
             .null, .optionIncludingWindow, windowID,
-            [.boundsIgnoreFraming, .bestResolution]
+            [.boundsIgnoreFraming, .nominalResolution]
         ) else {
             dpLog("Thumbnail capture failed for window \(windowID)")
             return nil
