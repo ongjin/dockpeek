@@ -36,6 +36,18 @@ struct SettingsView: View {
 
             Divider()
 
+            Toggle(L10n.previewOnHover, isOn: $appState.previewOnHover)
+
+            if appState.previewOnHover {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(L10n.hoverDelay): \(String(format: "%.1f", appState.hoverDelay))s")
+                        .font(.caption).foregroundColor(.secondary)
+                    Slider(value: $appState.hoverDelay, in: 0.3...2.0, step: 0.1)
+                }
+            }
+
+            Divider()
+
             // Language picker
             HStack {
                 Text(L10n.language)

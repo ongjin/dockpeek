@@ -46,6 +46,8 @@ struct L10n {
     static var enableDockPeek: String { s("enableDockPeek") }
     static var launchAtLogin: String { s("launchAtLogin") }
     static var forceNewWindowsToPrimary: String { s("forceNewWindowsToPrimary") }
+    static var previewOnHover: String { s("previewOnHover") }
+    static var hoverDelay: String { s("hoverDelay") }
     static var language: String { s("language") }
     static var permissions: String { s("permissions") }
     static var accessibilityGranted: String { s("accessibilityGranted") }
@@ -94,6 +96,8 @@ struct L10n {
         "enableDockPeek": "Enable DockPeek",
         "launchAtLogin": "Launch at login",
         "forceNewWindowsToPrimary": "Force new windows to primary display",
+        "previewOnHover": "Preview on mouse hover",
+        "hoverDelay": "Hover delay",
         "language": "Language",
         "permissions": "Permissions",
         "accessibilityGranted": "Accessibility: Granted",
@@ -139,6 +143,8 @@ struct L10n {
         "enableDockPeek": "DockPeek 활성화",
         "launchAtLogin": "로그인 시 자동 실행",
         "forceNewWindowsToPrimary": "새 창을 메인 디스플레이에 표시",
+        "previewOnHover": "마우스 호버시 프리뷰",
+        "hoverDelay": "호버 지연 시간",
         "language": "언어",
         "permissions": "권한",
         "accessibilityGranted": "손쉬운 사용: 허용됨",
