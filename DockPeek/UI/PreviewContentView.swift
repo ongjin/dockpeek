@@ -107,7 +107,7 @@ struct PreviewContentView: View {
             }
 
             if w.isMinimized {
-                Text("Minimized")
+                Text(L10n.minimized)
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }

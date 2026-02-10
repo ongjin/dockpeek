@@ -250,7 +250,7 @@ final class WindowManager {
 
         if targetAXWindow == nil {
             dpLog("No match — fallback to first AX window")
-            targetAXWindow = axWindows[0]
+            targetAXWindow = axWindows.first
         }
 
         guard let axWindow = targetAXWindow else { return }
@@ -312,6 +312,7 @@ final class WindowManager {
             dpLog("closeWindow: no close button for window \(windowID)")
             return
         }
+        // Safe: AXCloseButtonAttribute returns an AXUIElement
         let closeButton = closeRef as! AXUIElement
         AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
         dpLog("Closed window \(windowID)")
@@ -344,12 +345,13 @@ final class WindowManager {
         var currentPos = CGPoint.zero
         if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &currentPos) }
 
-        let primaryH = NSScreen.screens[0].frame.height
+        guard let primaryScreen = NSScreen.screens.first else { return }
+        let primaryH = primaryScreen.frame.height
         let screen = NSScreen.screens.first { s in
             let f = s.frame
             let cgFrame = CGRect(x: f.minX, y: primaryH - f.maxY, width: f.width, height: f.height)
             return cgFrame.contains(currentPos)
-        } ?? NSScreen.main!
+        } ?? primaryScreen
 
         let vis = screen.visibleFrame
         let cgY = primaryH - vis.maxY

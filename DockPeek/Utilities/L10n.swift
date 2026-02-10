@@ -70,6 +70,7 @@ struct L10n {
     static var addPlaceholder: String { s("addPlaceholder") }
     static var add: String { s("add") }
     static var quit: String { s("quit") }
+    static var minimized: String { s("minimized") }
 
     // MARK: - Lookup
 
@@ -114,6 +115,7 @@ struct L10n {
         "addPlaceholder": "com.example.app",
         "add": "Add",
         "quit": "Quit DockPeek",
+        "minimized": "Minimized",
 
         "checkForUpdates": "Check for Updates...",
         "updateAvailable": "Update Available",
@@ -161,6 +163,7 @@ struct L10n {
         "addPlaceholder": "com.example.app",
         "add": "추가",
         "quit": "DockPeek 종료",
+        "minimized": "최소화됨",
 
         "checkForUpdates": "업데이트 확인...",
         "updateAvailable": "업데이트 있음",

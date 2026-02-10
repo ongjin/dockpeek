@@ -13,7 +13,8 @@ final class AccessibilityManager {
     }
 
     func requestAccessibility() {
-        let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let opts = [key: true] as CFDictionary
         AXIsProcessTrustedWithOptions(opts)
     }
 
@@ -22,13 +23,15 @@ final class AccessibilityManager {
     }
 
     func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+        let urlString = "x-apple.systemsettings:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+        if let url = URL(string: urlString) {
             NSWorkspace.shared.open(url)
         }
     }
 
     func openScreenRecordingSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+        let urlString = "x-apple.systemsettings:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
+        if let url = URL(string: urlString) {
             NSWorkspace.shared.open(url)
         }
     }
