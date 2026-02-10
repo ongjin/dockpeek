@@ -52,11 +52,11 @@ final class DockAXInspector {
         var bundleID: String?
         var appURL: URL?
 
-        if let urlRef = axValue(dockItem, kAXURLAttribute) {
-            if CFGetTypeID(urlRef as CFTypeRef) == CFURLGetTypeID() {
-                appURL = (urlRef as! CFURL) as URL
-                bundleID = Bundle(url: appURL!)?.bundleIdentifier
-            }
+        if let urlRef = axValue(dockItem, kAXURLAttribute),
+           CFGetTypeID(urlRef as CFTypeRef) == CFURLGetTypeID() {
+            let cfURL = urlRef as! CFURL  // Safe: CFTypeID already verified above
+            appURL = cfURL as URL
+            bundleID = Bundle(url: cfURL as URL)?.bundleIdentifier
         }
 
         // 5. Find running application → PID
@@ -96,8 +96,9 @@ final class DockAXInspector {
             }
             var parent: AnyObject?
             guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parent) == .success,
-                  CFGetTypeID(parent!) == AXUIElementGetTypeID() else { break }
-            current = (parent as! AXUIElement)
+                  let parentRef = parent,
+                  CFGetTypeID(parentRef) == AXUIElementGetTypeID() else { break }
+            current = parentRef as! AXUIElement  // Safe: CFTypeID already verified above
         }
         return nil
     }

@@ -698,7 +698,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 var focusedRef: AnyObject?
                 AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &focusedRef)
                 guard let focused = focusedRef else { return }
-                axWin = focused as! AXUIElement
+                let axFocused = focused as! AXUIElement
+                axWin = axFocused
                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
             }
 
@@ -776,8 +777,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         var focusedRef: AnyObject?
         AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedRef)
-        guard let focused = focusedRef else { return }
-        let win = focused as! AXUIElement
+        guard let focusedVal = focusedRef else { return }
+        let win = focusedVal as! AXUIElement
 
         var posRef: AnyObject?
         AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef)
@@ -847,7 +848,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 self?.highlightOverlay.hide()
                 self?.previewPanel.dismissPanel()
             },
-            onHoverWindow: { [weak self] win in
+            onHoverWindow: { [weak self] (win: WindowInfo?) in
                 guard let self, self.appState.livePreviewOnHover else { return }
                 if let win {
                     self.highlightOverlay.show(for: win, cachedImage: win.thumbnail)

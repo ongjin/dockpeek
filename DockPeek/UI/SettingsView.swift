@@ -26,10 +26,14 @@ struct SettingsView: View {
             Toggle(L10n.enableDockPeek, isOn: $appState.isEnabled)
             Toggle(L10n.launchAtLogin, isOn: $appState.launchAtLogin)
                 .onChange(of: appState.launchAtLogin) { _, newValue in
-                    if newValue {
-                        try? SMAppService.mainApp.register()
-                    } else {
-                        try? SMAppService.mainApp.unregister()
+                    do {
+                        if newValue {
+                            try SMAppService.mainApp.register()
+                        } else {
+                            try SMAppService.mainApp.unregister()
+                        }
+                    } catch {
+                        dpLog("Login item registration failed: \(error)")
                     }
                 }
             Toggle(L10n.forceNewWindowsToPrimary, isOn: $appState.forceNewWindowsToPrimary)

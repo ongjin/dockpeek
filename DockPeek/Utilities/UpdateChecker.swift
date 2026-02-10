@@ -94,7 +94,12 @@ final class UpdateChecker {
         // Prevent child from inheriting our stdout/stderr (detach cleanly)
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try? process.run()
+        do {
+            try process.run()
+        } catch {
+            dpLog("Failed to start brew upgrade: \(error)")
+            return
+        }
 
         // Give the process a moment to start, then quit
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

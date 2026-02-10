@@ -95,10 +95,6 @@ final class PreviewPanel: NSPanel {
 
     func dismissPanel(animated: Bool = true) {
         removeDismissMonitors()
-        // Clear stored references to break retain cycles
-        storedWindows = []
-        storedOnSelect = nil
-        storedOnSnap = nil
         if animated {
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.12
@@ -107,11 +103,20 @@ final class PreviewPanel: NSPanel {
             }, completionHandler: {
                 self.orderOut(nil)
                 self.alphaValue = 1
+                self.storedWindows = []
+                self.storedOnSelect = nil
+                self.storedOnSnap = nil
                 self.contentView = nil
             })
         } else {
             orderOut(nil)
-            contentView = nil
+            // Defer cleanup to let current call stack (e.g. onSelect gesture) complete
+            DispatchQueue.main.async {
+                self.storedWindows = []
+                self.storedOnSelect = nil
+                self.storedOnSnap = nil
+                self.contentView = nil
+            }
         }
     }
 
