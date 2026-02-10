@@ -720,6 +720,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             }
         }
 
+        // Clean up existing observer for this PID if any
+        removeAXObserver(pid: pid)
+
         var observer: AXObserver?
         guard AXObserverCreate(pid, callback, &observer) == .success,
               let observer else { return }
@@ -728,6 +731,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         AXObserverAddNotification(observer, axApp, kAXWindowCreatedNotification as CFString, nil)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
         axObservers[pid] = observer
+
+        // Also observe app termination to clean up immediately
+        var terminateToken: NSObjectProtocol?
+        terminateToken = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let terminated = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  terminated.processIdentifier == pid else { return }
+            self?.removeAXObserver(pid: pid)
+            if let token = terminateToken {
+                NSWorkspace.shared.notificationCenter.removeObserver(token)
+            }
+        }
 
         // Exponential backoff polling: 5 checks covering ~2s window
         // AXObserver alone is unreliable — this catches windows the observer misses
@@ -742,6 +759,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             self?.removeAXObserver(pid: pid)
+            if let token = terminateToken {
+                NSWorkspace.shared.notificationCenter.removeObserver(token)
+                terminateToken = nil
+            }
         }
     }
 

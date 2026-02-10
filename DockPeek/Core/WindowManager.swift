@@ -29,6 +29,7 @@ final class WindowManager {
     /// Thumbnail cache: windowID → (image, timestamp)
     private var thumbnailCache: [CGWindowID: (NSImage, Date)] = [:]
     private let cacheTTL: TimeInterval = 5.0
+    private let maxCacheSize = 30
 
     // MARK: - Window Enumeration
 
@@ -129,10 +130,17 @@ final class WindowManager {
             return cached.0
         }
 
-        // Prune expired entries only when cache is large
+        // Prune expired entries and enforce size limit
         let now = Date()
-        if thumbnailCache.count > 20 {
+        if thumbnailCache.count > maxCacheSize {
             thumbnailCache = thumbnailCache.filter { now.timeIntervalSince($0.value.1) < cacheTTL }
+            // Still over limit — remove oldest entries
+            if thumbnailCache.count >= maxCacheSize {
+                let sorted = thumbnailCache.sorted { $0.value.1 < $1.value.1 }
+                for (id, _) in sorted.prefix(thumbnailCache.count - maxCacheSize + 1) {
+                    thumbnailCache.removeValue(forKey: id)
+                }
+            }
         }
 
         guard let cgImage = CGWindowListCreateImage(
@@ -143,14 +151,16 @@ final class WindowManager {
             return nil
         }
 
-        let full = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-        let aspect = full.size.width / full.size.height
+        // Draw CGImage directly into scaled size — avoids intermediate full-size NSImage
+        let w = CGFloat(cgImage.width), h = CGFloat(cgImage.height)
+        let aspect = w / h
         let scaled: NSSize = aspect > 1
             ? NSSize(width: maxSize, height: maxSize / aspect)
             : NSSize(width: maxSize * aspect, height: maxSize)
 
         let result = NSImage(size: scaled, flipped: false) { rect in
-            full.draw(in: rect)
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.draw(cgImage, in: rect)
             return true
         }
 
