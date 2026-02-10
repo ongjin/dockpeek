@@ -20,12 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var axObservers: [pid_t: AXObserver] = [:]
 
     // Hover preview
-    private var mouseMovedMonitor: Any?
+    private var hoverPollTimer: DispatchSourceTimer?
     private var hoverTimer: DispatchWorkItem?
     private var hoverDismissTimer: DispatchWorkItem?
     private var lastHoveredBundleID: String?
-    private var lastMouseMovedTime: CFTimeInterval = 0
-    private let mouseMovedThrottle: CFTimeInterval = 0.05 // 50ms
     private var hoverSettingObserver: AnyCancellable?
 
     // MARK: - Lifecycle
@@ -252,7 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             DispatchQueue.main.async {
                 guard let self else { return }
                 if self.appState.previewOnHover {
-                    if self.mouseMovedMonitor == nil,
+                    if self.hoverPollTimer == nil,
                        AccessibilityManager.shared.isAccessibilityGranted {
                         self.startHoverMonitor()
                     }
@@ -265,17 +263,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     private func startHoverMonitor() {
         stopHoverMonitor()
-        mouseMovedMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
-            self?.handleMouseMoved(event)
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(200))
+        timer.setEventHandler { [weak self] in
+            self?.pollMouseForHover()
         }
-        dpLog("Hover monitor started")
+        timer.resume()
+        hoverPollTimer = timer
+        dpLog("Hover poll timer started (200ms interval)")
     }
 
     private func stopHoverMonitor() {
-        if let monitor = mouseMovedMonitor {
-            NSEvent.removeMonitor(monitor)
-            mouseMovedMonitor = nil
-        }
+        hoverPollTimer?.cancel()
+        hoverPollTimer = nil
         hoverTimer?.cancel()
         hoverTimer = nil
         hoverDismissTimer?.cancel()
@@ -283,13 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         lastHoveredBundleID = nil
     }
 
-    private func handleMouseMoved(_ event: NSEvent) {
-        // Throttle: skip if less than 50ms since last processed event
-        let now = CACurrentMediaTime()
-        guard now - lastMouseMovedTime >= mouseMovedThrottle else { return }
-        lastMouseMovedTime = now
-
-        // Convert NSEvent.mouseLocation (Cocoa bottom-left) to CG (top-left)
+    private func pollMouseForHover() {
         let cocoaLoc = NSEvent.mouseLocation
         let screenH = NSScreen.screens.first?.frame.height ?? 0
         let cgPoint = CGPoint(x: cocoaLoc.x, y: screenH - cocoaLoc.y)
