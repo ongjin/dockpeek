@@ -79,11 +79,10 @@ final class EventTapManager {
                 dpLog("Watchdog: permission lost — emergency tap invalidation")
                 // Invalidate from background thread to unblock HID events
                 self?.emergencyInvalidateTap()
+                // Let stop() on main thread handle watchdog cleanup (avoids race)
                 DispatchQueue.main.async {
                     self?.stop()
                 }
-                self?.permissionWatchdog?.cancel()
-                self?.permissionWatchdog = nil
             }
         }
         timer.resume()

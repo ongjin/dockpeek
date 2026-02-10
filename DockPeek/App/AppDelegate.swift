@@ -25,14 +25,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private static let idlePollInterval: TimeInterval = 0.25   // 4 Hz
     private static let activePollInterval: TimeInterval = 0.066 // ~15 Hz
     fileprivate var cachedDockRect: CGRect = .zero
-    fileprivate var mouseInDockZone = false
     fileprivate var previewIsVisible = false
+    private var cmdCommaMonitor: Any?
     private var hoverTimer: DispatchWorkItem?
     private var hoverDismissTimer: DispatchWorkItem?
     private var lastHoveredBundleID: String?
     private var hoverSettingObserver: AnyCancellable?
 
     // MARK: - Lifecycle
+
+    func applicationWillTerminate(_ notification: Notification) {
+        eventTapManager.stop()
+        stopHoverMonitor()
+        permissionMonitorTimer?.invalidate()
+        accessibilityTimer?.invalidate()
+        if let m = cmdCommaMonitor { NSEvent.removeMonitor(m) }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -193,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     // MARK: - Cmd+, Shortcut
 
     private func setupCmdCommaShortcut() {
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        cmdCommaMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," {
                 self?.openSettings()
                 return nil
@@ -292,7 +300,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         hoverDismissTimer?.cancel()
         hoverDismissTimer = nil
         lastHoveredBundleID = nil
-        mouseInDockZone = false
         previewIsVisible = false
     }
 
@@ -314,8 +321,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             hoverPollTimer?.schedule(deadline: .now() + desired, repeating: desired)
             dpLog("Poll interval → \(desired)s")
         }
-
-        mouseInDockZone = inDock
 
         // Only process when near dock or preview is visible
         if needsActive {
@@ -505,8 +510,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         // If preview is visible, handle click without debounce
         if previewPanel.isVisible {
             let panelFrame = previewPanel.frame
-            let screenH = NSScreen.main?.frame.height ?? 0
+            let screenH = NSScreen.screens.first?.frame.height ?? 0
             // Convert CG point (top-left origin) to Cocoa (bottom-left origin)
+            // Must use primary screen height — CG origin is at top-left of primary screen
             let cocoaPoint = NSPoint(x: point.x, y: screenH - point.y)
             if panelFrame.contains(cocoaPoint) {
                 // Click is on the preview panel — let it through to SwiftUI.
@@ -538,7 +544,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                     // 1 window: dismiss preview, let click through to activate app
                     highlightOverlay.hide()
                     previewPanel.dismissPanel(animated: false)
-                    lastHoveredBundleID = nil
+                    previewIsVisible = false
+                    // Keep bundle ID so hover poll doesn't re-trigger for this app
+                    lastHoveredBundleID = dockApp.bundleIdentifier ?? dockApp.name
                     return false
                 }
             }
@@ -645,12 +653,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     /// Fast geometric check — is the click point in the Dock region?
     /// Uses the gap between screen.frame and screen.visibleFrame.
     private func isPointInDockArea(_ point: CGPoint) -> Bool {
+        let primaryH = NSScreen.screens.first?.frame.height ?? 0
         for screen in NSScreen.screens {
             let full = screen.frame
             let vis = screen.visibleFrame
-            let screenH = full.height
             // Convert CG (top-left) to Cocoa (bottom-left)
-            let cocoaY = screenH - point.y
+            // Must use primary screen height — CG origin is at top-left of primary screen
+            let cocoaY = primaryH - point.y
 
             // Check if the point is on this screen
             let cocoaPoint = NSPoint(x: point.x, y: cocoaY)
@@ -828,6 +837,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             onSelect: { [weak self] win in
                 self?.highlightOverlay.hide()
                 self?.previewPanel.dismissPanel(animated: false)
+                self?.previewIsVisible = false
                 self?.windowManager.activateWindow(windowID: win.id, pid: win.ownerPID)
             },
             onClose: { [weak self] win in

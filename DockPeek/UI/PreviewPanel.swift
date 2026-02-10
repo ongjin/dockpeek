@@ -97,12 +97,15 @@ final class PreviewPanel: NSPanel {
 
     func dismissPanel(animated: Bool = true) {
         removeDismissMonitors()
+        let gen = dismissGeneration
         if animated {
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.12
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 self.animator().alphaValue = 0
             }, completionHandler: {
+                // Skip cleanup if showPreview was called during the animation
+                guard self.dismissGeneration == gen else { return }
                 self.orderOut(nil)
                 self.alphaValue = 1
                 self.storedWindows = []
@@ -111,7 +114,6 @@ final class PreviewPanel: NSPanel {
                 self.contentView = nil
             })
         } else {
-            let gen = dismissGeneration
             orderOut(nil)
             // Defer cleanup to let current call stack (e.g. onSelect gesture) complete.
             // Skip if showPreview was called in between (generation changed).
@@ -133,10 +135,11 @@ final class PreviewPanel: NSPanel {
         }
 
         let screenFrame = screen.visibleFrame
-        let screenH = screen.frame.height
+        let primaryH = NSScreen.screens.first?.frame.height ?? screen.frame.height
 
         // Convert CG (top-left origin) → Cocoa (bottom-left origin)
-        let nsY = screenH - nearPoint.y
+        // Must use primary screen height — CG origin is at top-left of primary screen
+        let nsY = primaryH - nearPoint.y
 
         let dockPos = detectDockPosition(screen: screen)
         var origin: NSPoint
@@ -168,11 +171,11 @@ final class PreviewPanel: NSPanel {
     }
 
     private func screenForCGPoint(_ pt: CGPoint) -> NSScreen? {
+        let primaryH = NSScreen.screens.first?.frame.height ?? 0
         for screen in NSScreen.screens {
-            let h = screen.frame.height
-            if screen.frame.contains(NSPoint(x: pt.x, y: h - pt.y)) { return screen }
+            if screen.frame.contains(NSPoint(x: pt.x, y: primaryH - pt.y)) { return screen }
         }
-        return NSScreen.main
+        return NSScreen.screens.first
     }
 
     // MARK: - Dismiss Monitors

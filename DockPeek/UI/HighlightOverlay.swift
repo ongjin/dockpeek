@@ -8,17 +8,17 @@ final class HighlightOverlay {
     private var overlayWindow: NSWindow?
     private var currentWindowID: CGWindowID?
     private var isHiding = false
+    private var overlayGeneration = 0
 
     func show(for windowInfo: WindowInfo, cachedImage: NSImage? = nil) {
         // Skip if already showing for this window
         if currentWindowID == windowInfo.id { return }
 
-        // If hide animation is in progress, cancel it immediately
+        overlayGeneration &+= 1
+
+        // If hide animation is in progress, force-finish it
         if isHiding, let window = overlayWindow {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0
-            }
-            window.animator().alphaValue = 0
+            window.alphaValue = 0
             window.orderOut(nil)
             overlayWindow = nil
             isHiding = false
@@ -26,13 +26,14 @@ final class HighlightOverlay {
 
         currentWindowID = windowInfo.id
 
-        guard let screen = screenForCGRect(windowInfo.bounds) else { return }
-        let screenH = screen.frame.height
+        let primaryH = NSScreen.screens.first?.frame.height ?? 0
+        guard screenForCGRect(windowInfo.bounds, primaryH: primaryH) != nil else { return }
 
         // Convert CG bounds (top-left origin) to Cocoa (bottom-left origin)
+        // Must use primary screen height — CG origin is at top-left of primary screen
         let cocoaRect = NSRect(
             x: windowInfo.bounds.origin.x,
-            y: screenH - windowInfo.bounds.origin.y - windowInfo.bounds.height,
+            y: primaryH - windowInfo.bounds.origin.y - windowInfo.bounds.height,
             width: windowInfo.bounds.width,
             height: windowInfo.bounds.height
         )
@@ -94,28 +95,33 @@ final class HighlightOverlay {
         guard let window = overlayWindow, !isHiding else { return }
         isHiding = true
         currentWindowID = nil
+        let gen = overlayGeneration
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.1
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             window.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
+            // Skip cleanup if show() was called during the animation
+            guard let self, self.overlayGeneration == gen else { return }
             window.orderOut(nil)
-            self?.overlayWindow = nil
-            self?.isHiding = false
+            self.overlayWindow = nil
+            self.isHiding = false
         })
     }
 
-    private func screenForCGRect(_ rect: CGRect) -> NSScreen? {
+    private func screenForCGRect(_ rect: CGRect, primaryH: CGFloat? = nil) -> NSScreen? {
+        let pH = primaryH ?? NSScreen.screens.first?.frame.height ?? 0
+        let cocoaRect = NSRect(
+            x: rect.origin.x,
+            y: pH - rect.origin.y - rect.height,
+            width: rect.width,
+            height: rect.height
+        )
         for screen in NSScreen.screens {
-            if screen.frame.intersects(NSRect(
-                x: rect.origin.x,
-                y: screen.frame.height - rect.origin.y - rect.height,
-                width: rect.width,
-                height: rect.height
-            )) {
+            if screen.frame.intersects(cocoaRect) {
                 return screen
             }
         }
-        return NSScreen.main
+        return NSScreen.screens.first
     }
 }
