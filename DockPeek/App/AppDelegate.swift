@@ -497,7 +497,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         // Cancel any pending hover timer on click
         hoverTimer?.cancel()
         hoverTimer = nil
-        lastHoveredBundleID = nil
 
         // Cancel any pending dismiss timer
         hoverDismissTimer?.cancel()
@@ -510,7 +509,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             // Convert CG point (top-left origin) to Cocoa (bottom-left origin)
             let cocoaPoint = NSPoint(x: point.x, y: screenH - point.y)
             if panelFrame.contains(cocoaPoint) {
-                // Click is on the preview panel — let it through to SwiftUI
+                // Click is on the preview panel — let it through to SwiftUI.
+                // Keep lastHoveredBundleID so the hover poll doesn't re-show
+                // a preview after the onSelect handler activates a window.
                 return false
             }
 
@@ -548,6 +549,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             lastHoveredBundleID = nil
             return true
         }
+
+        // No preview visible — clear hover state
+        lastHoveredBundleID = nil
 
         // Debounce (only for new preview triggers, not panel interactions)
         let now = Date()
