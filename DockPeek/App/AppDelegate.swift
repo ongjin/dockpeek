@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegate, NSWindowDelegate {
@@ -23,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var hoverTimer: DispatchWorkItem?
     private var hoverDismissTimer: DispatchWorkItem?
     private var lastHoveredBundleID: String?
+    private var lastMouseMovedTime: CFTimeInterval = 0
+    private let mouseMovedThrottle: CFTimeInterval = 0.05 // 50ms
+    private var hoverSettingObserver: AnyCancellable?
 
     // MARK: - Lifecycle
 
@@ -33,12 +37,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         if AccessibilityManager.shared.isAccessibilityGranted {
             startEventTap()
-            startHoverMonitor()
+            if appState.previewOnHover { startHoverMonitor() }
             startPermissionMonitor()
         } else {
             showOnboarding()
             startAccessibilityPolling()
         }
+
+        observeHoverSetting()
 
         // Auto-check for updates (respects 24-hour cooldown)
         updateChecker.check(force: false) { [weak self] available in
@@ -222,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             guard let self else { timer.invalidate(); return }
             if AccessibilityManager.shared.isAccessibilityGranted {
                 self.startEventTap()
-                self.startHoverMonitor()
+                if self.appState.previewOnHover { self.startHoverMonitor() }
                 timer.invalidate()
                 self.accessibilityTimer = nil
                 self.startPermissionMonitor()
@@ -239,6 +245,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 
     // MARK: - Hover Monitor
+
+    /// Observe previewOnHover toggle — start/stop monitor dynamically
+    private func observeHoverSetting() {
+        hoverSettingObserver = appState.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if self.appState.previewOnHover {
+                    if self.mouseMovedMonitor == nil,
+                       AccessibilityManager.shared.isAccessibilityGranted {
+                        self.startHoverMonitor()
+                    }
+                } else {
+                    self.stopHoverMonitor()
+                }
+            }
+        }
+    }
 
     private func startHoverMonitor() {
         stopHoverMonitor()
@@ -261,7 +284,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 
     private func handleMouseMoved(_ event: NSEvent) {
-        guard appState.previewOnHover else { return }
+        // Throttle: skip if less than 50ms since last processed event
+        let now = CACurrentMediaTime()
+        guard now - lastMouseMovedTime >= mouseMovedThrottle else { return }
+        lastMouseMovedTime = now
 
         // Convert NSEvent.mouseLocation (Cocoa bottom-left) to CG (top-left)
         let cocoaLoc = NSEvent.mouseLocation
