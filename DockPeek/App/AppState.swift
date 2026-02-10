@@ -9,6 +9,8 @@ final class AppState: ObservableObject {
     @AppStorage("livePreviewOnHover") var livePreviewOnHover = true
     @AppStorage("launchAtLogin") var launchAtLogin = false
     @AppStorage("forceNewWindowsToPrimary") var forceNewWindowsToPrimary = false
+    @AppStorage("previewOnHover") var previewOnHover = false
+    @AppStorage("hoverDelay") var hoverDelay: Double = 0.5
     @AppStorage("excludedBundleIDs") var excludedBundleIDsRaw = ""
     @AppStorage("appLanguage") var language: String = "en"
 

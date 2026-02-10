@@ -18,6 +18,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var accessibilityTimer: Timer?
     private var axObservers: [pid_t: AXObserver] = [:]
 
+    // Hover preview
+    private var mouseMovedMonitor: Any?
+    private var hoverTimer: DispatchWorkItem?
+    private var hoverDismissTimer: DispatchWorkItem?
+    private var lastHoveredBundleID: String?
+
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -27,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         if AccessibilityManager.shared.isAccessibilityGranted {
             startEventTap()
+            startHoverMonitor()
             startPermissionMonitor()
         } else {
             showOnboarding()
@@ -215,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             guard let self else { timer.invalidate(); return }
             if AccessibilityManager.shared.isAccessibilityGranted {
                 self.startEventTap()
+                self.startHoverMonitor()
                 timer.invalidate()
                 self.accessibilityTimer = nil
                 self.startPermissionMonitor()
@@ -228,6 +236,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         eventTapManager.delegate = self
         eventTapManager.start()
         dpLog("Event tap delegate connected")
+    }
+
+    // MARK: - Hover Monitor
+
+    private func startHoverMonitor() {
+        stopHoverMonitor()
+        mouseMovedMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            self?.handleMouseMoved(event)
+        }
+        dpLog("Hover monitor started")
+    }
+
+    private func stopHoverMonitor() {
+        if let monitor = mouseMovedMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseMovedMonitor = nil
+        }
+        hoverTimer?.cancel()
+        hoverTimer = nil
+        hoverDismissTimer?.cancel()
+        hoverDismissTimer = nil
+        lastHoveredBundleID = nil
+    }
+
+    private func handleMouseMoved(_ event: NSEvent) {
+        guard appState.previewOnHover else { return }
+
+        // Convert NSEvent.mouseLocation (Cocoa bottom-left) to CG (top-left)
+        let cocoaLoc = NSEvent.mouseLocation
+        let screenH = NSScreen.screens.first?.frame.height ?? 0
+        let cgPoint = CGPoint(x: cocoaLoc.x, y: screenH - cocoaLoc.y)
+
+        // If mouse is over the preview panel, cancel any pending dismiss and let user interact
+        if previewPanel.isVisible, previewPanel.frame.contains(cocoaLoc) {
+            hoverDismissTimer?.cancel()
+            hoverDismissTimer = nil
+            return
+        }
+
+        let inDock = isPointInDockArea(cgPoint)
+        let dockApp = inDock ? dockInspector.appAtPoint(cgPoint) : nil
+
+        // Mouse is outside both dock and preview panel
+        if !inDock || dockApp == nil {
+            hoverTimer?.cancel()
+            hoverTimer = nil
+            if previewPanel.isVisible {
+                // Delayed dismiss — gives time to cross the gap to the preview panel
+                if hoverDismissTimer == nil {
+                    let task = DispatchWorkItem { [weak self] in
+                        guard let self else { return }
+                        self.lastHoveredBundleID = nil
+                        self.hoverDismissTimer = nil
+                        self.highlightOverlay.hide()
+                        self.previewPanel.dismissPanel()
+                    }
+                    hoverDismissTimer = task
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: task)
+                }
+            } else {
+                lastHoveredBundleID = nil
+            }
+            return
+        }
+
+        // Mouse is in dock on an app — cancel any pending dismiss
+        hoverDismissTimer?.cancel()
+        hoverDismissTimer = nil
+
+        guard let dockApp else { return }
+
+        let bundleID = dockApp.bundleIdentifier ?? dockApp.name
+
+        // Same app — keep existing timer/preview
+        if bundleID == lastHoveredBundleID { return }
+
+        // Different app — cancel old timer and dismiss current preview
+        hoverTimer?.cancel()
+        let wasVisible = previewPanel.isVisible
+        if wasVisible {
+            highlightOverlay.hide()
+            previewPanel.dismissPanel(animated: false)
+        }
+        lastHoveredBundleID = bundleID
+
+        guard dockApp.isRunning, let pid = dockApp.pid else {
+            hoverTimer = nil
+            return
+        }
+
+        if appState.isExcluded(bundleID: dockApp.bundleIdentifier) {
+            hoverTimer = nil
+            return
+        }
+
+        // Instant switch when already browsing, normal delay for first hover
+        if wasVisible {
+            handleHoverPreview(for: pid, at: cgPoint)
+        } else {
+            let task = DispatchWorkItem { [weak self] in
+                self?.handleHoverPreview(for: pid, at: cgPoint)
+            }
+            hoverTimer = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + appState.hoverDelay, execute: task)
+        }
+    }
+
+    private func handleHoverPreview(for pid: pid_t, at point: CGPoint) {
+        guard appState.previewOnHover else { return }
+
+        let windows = windowManager.windowsForApp(pid: pid)
+        guard !windows.isEmpty else { return }
+
+        dpLog("Hover preview: \(windows.count) window(s) for PID \(pid)")
+        showPreviewForWindows(windows, at: point)
     }
 
     // MARK: - Permission Monitor
@@ -244,6 +367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             if !AccessibilityManager.shared.isAccessibilityGranted {
                 dpLog("Permission revoked — stopping event tap")
                 self.eventTapManager.stop()
+                self.stopHoverMonitor()
                 timer.invalidate()
                 self.permissionMonitorTimer = nil
                 // Resume polling so we can restart when permission is re-granted
@@ -257,6 +381,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     func eventTapManager(_ manager: EventTapManager, didDetectClickAt point: CGPoint) -> Bool {
         guard appState.isEnabled else { return false }
 
+        // Cancel any pending hover timer on click
+        hoverTimer?.cancel()
+        hoverTimer = nil
+        lastHoveredBundleID = nil
+
+        // Cancel any pending dismiss timer
+        hoverDismissTimer?.cancel()
+        hoverDismissTimer = nil
+
         // If preview is visible, handle click without debounce
         if previewPanel.isVisible {
             let panelFrame = previewPanel.frame
@@ -267,8 +400,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 // Click is on the preview panel — let it through to SwiftUI
                 return false
             }
-            // Click is outside — dismiss and SUPPRESS (prevent Dock activation)
+
+            // Click is on a Dock icon — check what app it is
+            if isPointInDockArea(point), let dockApp = dockInspector.appAtPoint(point),
+               dockApp.isRunning, let pid = dockApp.pid,
+               !appState.isExcluded(bundleID: dockApp.bundleIdentifier) {
+                let windows = windowManager.windowsForApp(pid: pid)
+                if windows.count >= 2 {
+                    // 2+ windows: suppress click, keep preview (or switch to this app's preview)
+                    let bundleID = dockApp.bundleIdentifier ?? dockApp.name
+                    if bundleID != lastHoveredBundleID {
+                        // Clicked a different app — switch preview
+                        highlightOverlay.hide()
+                        previewPanel.dismissPanel(animated: false)
+                        lastHoveredBundleID = bundleID
+                        DispatchQueue.main.async { [weak self] in
+                            self?.showPreviewForWindows(windows, at: point)
+                        }
+                    }
+                    // Same app — just keep existing preview
+                    return true
+                } else {
+                    // 1 window: dismiss preview, let click through to activate app
+                    highlightOverlay.hide()
+                    previewPanel.dismissPanel(animated: false)
+                    lastHoveredBundleID = nil
+                    return false
+                }
+            }
+
+            // Click is outside dock — dismiss and SUPPRESS
+            highlightOverlay.hide()
             previewPanel.dismissPanel(animated: false)
+            lastHoveredBundleID = nil
             return true
         }
 
