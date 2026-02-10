@@ -8,7 +8,7 @@ final class HighlightOverlay {
     private var overlayWindow: NSWindow?
     private var currentWindowID: CGWindowID?
 
-    func show(for windowInfo: WindowInfo) {
+    func show(for windowInfo: WindowInfo, cachedImage: NSImage? = nil) {
         // Skip if already showing for this window
         if currentWindowID == windowInfo.id { return }
         hide()
@@ -25,18 +25,25 @@ final class HighlightOverlay {
             height: windowInfo.bounds.height
         )
 
-        let window = NSWindow(
-            contentRect: cocoaRect,
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.level = .popUpMenu - 1
-        window.ignoresMouseEvents = true
-        window.hasShadow = true
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // Reuse existing window or create one
+        let window: NSWindow
+        if let existing = overlayWindow {
+            existing.setFrame(cocoaRect, display: false)
+            window = existing
+        } else {
+            window = NSWindow(
+                contentRect: cocoaRect,
+                styleMask: .borderless,
+                backing: .buffered,
+                defer: false
+            )
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.level = .popUpMenu - 1
+            window.ignoresMouseEvents = true
+            window.hasShadow = true
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        }
 
         let container = NSView(frame: NSRect(origin: .zero, size: cocoaRect.size))
         container.wantsLayer = true
@@ -45,13 +52,22 @@ final class HighlightOverlay {
         container.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
         container.layer?.borderWidth = 3
 
-        // Capture real window content at full resolution
-        if let cgImage = CGWindowListCreateImage(
+        // Use cached image if available, otherwise capture
+        let displayImage: NSImage?
+        if let cachedImage {
+            displayImage = cachedImage
+        } else if let cgImage = CGWindowListCreateImage(
             .null, .optionIncludingWindow, windowInfo.id,
-            [.boundsIgnoreFraming, .bestResolution]
+            [.boundsIgnoreFraming, .nominalResolution]
         ) {
+            displayImage = NSImage(cgImage: cgImage, size: cocoaRect.size)
+        } else {
+            displayImage = nil
+        }
+
+        if let displayImage {
             let imageView = NSImageView(frame: NSRect(origin: .zero, size: cocoaRect.size))
-            imageView.image = NSImage(cgImage: cgImage, size: cocoaRect.size)
+            imageView.image = displayImage
             imageView.imageScaling = .scaleProportionallyUpOrDown
             imageView.autoresizingMask = [.width, .height]
             container.addSubview(imageView)
@@ -76,6 +92,7 @@ final class HighlightOverlay {
 
     func hide() {
         guard let window = overlayWindow else { return }
+        currentWindowID = nil
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.1
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)

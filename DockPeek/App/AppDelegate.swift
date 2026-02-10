@@ -19,13 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var accessibilityTimer: Timer?
     private var axObservers: [pid_t: AXObserver] = [:]
 
-    // Hover preview — listen-only CGEvent tap
-    fileprivate var hoverEventTap: CFMachPort?
-    private var hoverRunLoopSource: CFRunLoopSource?
+    // Hover preview — adaptive polling timer
+    private var hoverPollTimer: DispatchSourceTimer?
+    private var currentPollInterval: TimeInterval = 0.25
+    private static let idlePollInterval: TimeInterval = 0.25   // 4 Hz
+    private static let activePollInterval: TimeInterval = 0.066 // ~15 Hz
     fileprivate var cachedDockRect: CGRect = .zero
     fileprivate var mouseInDockZone = false
     fileprivate var previewIsVisible = false
-    fileprivate var lastHoverDispatchTime: CFTimeInterval = 0
     private var hoverTimer: DispatchWorkItem?
     private var hoverDismissTimer: DispatchWorkItem?
     private var lastHoveredBundleID: String?
@@ -256,7 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             DispatchQueue.main.async {
                 guard let self else { return }
                 if self.appState.previewOnHover {
-                    if self.hoverEventTap == nil,
+                    if self.hoverPollTimer == nil,
                        AccessibilityManager.shared.isAccessibilityGranted {
                         self.startHoverMonitor()
                     }
@@ -271,39 +272,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         stopHoverMonitor()
         updateCachedDockRect()
 
-        let mask: CGEventMask = (1 << CGEventType.mouseMoved.rawValue)
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
-            eventsOfInterest: mask,
-            callback: hoverTapCallback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
-            dpLog("Failed to create hover event tap")
-            return
+        currentPollInterval = Self.idlePollInterval
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + currentPollInterval,
+                       repeating: currentPollInterval)
+        timer.setEventHandler { [weak self] in
+            self?.pollMousePosition()
         }
-
-        hoverEventTap = tap
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        hoverRunLoopSource = source
-        if let source {
-            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-            dpLog("Hover CGEvent tap started (listen-only)")
-        }
+        timer.resume()
+        hoverPollTimer = timer
+        dpLog("Hover poll timer started (idle \(Self.idlePollInterval)s)")
     }
 
     private func stopHoverMonitor() {
-        if let tap = hoverEventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-        }
-        if let source = hoverRunLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        }
-        hoverEventTap = nil
-        hoverRunLoopSource = nil
+        hoverPollTimer?.cancel()
+        hoverPollTimer = nil
         hoverTimer?.cancel()
         hoverTimer = nil
         hoverDismissTimer?.cancel()
@@ -311,6 +294,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         lastHoveredBundleID = nil
         mouseInDockZone = false
         previewIsVisible = false
+    }
+
+    /// Lightweight poll: reads NSEvent.mouseLocation and checks dock proximity.
+    /// Adapts timer interval based on whether mouse is near dock or preview is visible.
+    private func pollMousePosition() {
+        let cocoaLoc = NSEvent.mouseLocation
+        let screenH = NSScreen.screens.first?.frame.height ?? 0
+        let cgPoint = CGPoint(x: cocoaLoc.x, y: screenH - cocoaLoc.y)
+
+        let inDock = cachedDockRect.contains(cgPoint)
+        previewIsVisible = previewPanel.isVisible
+        let needsActive = inDock || previewIsVisible
+
+        // Adapt polling interval
+        let desired = needsActive ? Self.activePollInterval : Self.idlePollInterval
+        if abs(currentPollInterval - desired) > 0.001 {
+            currentPollInterval = desired
+            hoverPollTimer?.schedule(deadline: .now() + desired, repeating: desired)
+            dpLog("Poll interval → \(desired)s")
+        }
+
+        mouseInDockZone = inDock
+
+        // Only process when near dock or preview is visible
+        if needsActive {
+            processHoverEvent()
+        }
     }
 
     fileprivate func updateCachedDockRect() {
@@ -358,7 +368,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     /// Called from the CGEvent tap callback (on main thread) when mouse is near the dock or preview panel.
     fileprivate func processHoverEvent() {
-        previewIsVisible = previewPanel.isVisible
         guard appState.previewOnHover else { return }
 
         let cocoaLoc = NSEvent.mouseLocation
@@ -465,7 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     /// If revoked, stops the event tap immediately to prevent system-wide input freeze.
     private func startPermissionMonitor() {
         permissionMonitorTimer?.invalidate()
-        permissionMonitorTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
+        permissionMonitorTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) {
             [weak self] timer in
             guard let self else { timer.invalidate(); return }
             if !AccessibilityManager.shared.isAccessibilityGranted {
@@ -720,11 +729,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
         axObservers[pid] = observer
 
-        // Aggressive polling backup: check every 50ms for 2 seconds
+        // Exponential backoff polling: 5 checks covering ~2s window
         // AXObserver alone is unreliable — this catches windows the observer misses
         let axAppRef = axApp
-        for i in 1...40 {
-            let delay = Double(i) * 0.05
+        let backoffDelays: [Double] = [0.1, 0.3, 0.7, 1.2, 2.0]
+        for delay in backoffDelays {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard self?.appState.forceNewWindowsToPrimary == true else { return }
                 self?.moveAppWindowToPrimaryIfNeeded(axApp: axAppRef)
@@ -820,7 +829,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             onHoverWindow: { [weak self] win in
                 guard let self, self.appState.livePreviewOnHover else { return }
                 if let win {
-                    self.highlightOverlay.show(for: win)
+                    self.highlightOverlay.show(for: win, cachedImage: win.thumbnail)
                 } else {
                     self.highlightOverlay.hide()
                 }
@@ -829,50 +838,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 }
 
-// MARK: - Hover CGEvent Tap Callback
-
-/// Listen-only CGEvent tap callback for mouseMoved events.
-/// Runs on the main run loop. Does a single CGRect.contains() check per event.
-/// Only dispatches to the main thread when mouse is near the dock or preview is visible.
-private func hoverTapCallback(
-    proxy: CGEventTapProxy,
-    type: CGEventType,
-    event: CGEvent,
-    userInfo: UnsafeMutableRawPointer?
-) -> Unmanaged<CGEvent>? {
-    guard let userInfo else { return Unmanaged.passUnretained(event) }
-    let app = Unmanaged<AppDelegate>.fromOpaque(userInfo).takeUnretainedValue()
-
-    // Re-enable if system disabled the tap
-    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        if let tap = app.hoverEventTap {
-            CGEvent.tapEnable(tap: tap, enable: true)
-        }
-        return Unmanaged.passUnretained(event)
-    }
-
-    let point = event.location
-    let inDock = app.cachedDockRect.contains(point)
-
-    if inDock {
-        app.mouseInDockZone = true
-    } else if !app.mouseInDockZone && !app.previewIsVisible {
-        // Fast path: mouse far from dock, no preview visible — zero overhead
-        return Unmanaged.passUnretained(event)
-    } else {
-        app.mouseInDockZone = false
-    }
-
-    // Throttle: dispatch at most every 200ms
-    let now = CFAbsoluteTimeGetCurrent()
-    guard now - app.lastHoverDispatchTime >= 0.2 else {
-        return Unmanaged.passUnretained(event)
-    }
-    app.lastHoverDispatchTime = now
-
-    DispatchQueue.main.async {
-        app.processHoverEvent()
-    }
-
-    return Unmanaged.passUnretained(event)
-}
