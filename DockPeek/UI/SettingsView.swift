@@ -175,7 +175,10 @@ struct SettingsView: View {
                         Text(L10n.checkNow)
                     }
                 }
-                .disabled(isCheckingUpdate || updateChecker.upgradeState == .updating)
+                .disabled(isCheckingUpdate || {
+                    if case .downloading = updateChecker.upgradeState { return true }
+                    return false
+                }())
                 Spacer()
             }
 
@@ -232,13 +235,25 @@ struct SettingsView: View {
             // Upgrade state UI
             switch updateChecker.upgradeState {
             case .idle:
-                upgradeIdleButtons
-            case .updating:
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
+                if updateChecker.updateAvailable {
+                    HStack {
+                        Button(L10n.updateNow) {
+                            updateChecker.downloadAndInstall()
+                        }
+                        .controlSize(.large)
+                        Button(L10n.download) {
+                            if let url = URL(string: updateChecker.releaseURL) {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .controlSize(.large)
+                    }
+                }
+            case .downloading(let progress):
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: progress)
                     Text(L10n.upgrading)
-                        .foregroundColor(.secondary)
+                        .font(.caption).foregroundColor(.secondary)
                 }
             case .completed:
                 HStack(spacing: 8) {
@@ -264,28 +279,9 @@ struct SettingsView: View {
                         .lineLimit(3)
                     Button(L10n.retry) {
                         updateChecker.resetUpgradeState()
-                        updateChecker.performBrewUpgrade()
+                        updateChecker.downloadAndInstall()
                     }
                 }
-            }
-        }
-    }
-
-    private var upgradeIdleButtons: some View {
-        HStack {
-            if updateChecker.isBrewInstalled && updateChecker.updateAvailable {
-                Button(L10n.updateNow) {
-                    updateChecker.performBrewUpgrade()
-                }
-                .controlSize(.large)
-            }
-            if updateChecker.updateAvailable {
-                Button(L10n.download) {
-                    if let url = URL(string: updateChecker.releaseURL) {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .controlSize(.large)
             }
         }
     }

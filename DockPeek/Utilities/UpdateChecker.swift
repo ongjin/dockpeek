@@ -3,16 +3,9 @@ import Combine
 
 enum UpgradeState: Equatable {
     case idle
-    case updating
+    case downloading(Double)   // progress 0.0–1.0
     case completed
     case failed(String)
-
-    var isTerminal: Bool {
-        switch self {
-        case .completed, .failed: return true
-        default: return false
-        }
-    }
 }
 
 final class UpdateChecker: ObservableObject {
@@ -32,35 +25,20 @@ final class UpdateChecker: ObservableObject {
         UserDefaults.standard.object(forKey: lastCheckKey) as? Date
     }
 
-    /// Resolved Homebrew binary path, or nil if not installed.
-    lazy var brewPath: String? = {
-        let candidates = [
-            "/opt/homebrew/bin/brew",   // Apple Silicon
-            "/usr/local/bin/brew",      // Intel
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }()
-
-    var isBrewInstalled: Bool { brewPath != nil }
-
     private init() {}
 
     // MARK: - Interval
 
-    /// Returns the check interval in seconds based on the user's setting.
-    /// Returns nil for "manual" (no automatic checking).
     static func intervalForSetting(_ setting: String) -> TimeInterval? {
         switch setting {
         case "daily":  return 24 * 60 * 60
         case "weekly": return 7 * 24 * 60 * 60
-        default:       return nil // manual
+        default:       return nil
         }
     }
 
-    // MARK: - Public
+    // MARK: - Check for Updates
 
-    /// Check for updates. `force` bypasses the cooldown.
-    /// `intervalSetting` should be "daily", "weekly", or "manual".
     func check(force: Bool = false, intervalSetting: String = "daily", completion: @escaping (Bool) -> Void) {
         if !force, let interval = Self.intervalForSetting(intervalSetting),
            let last = UserDefaults.standard.object(forKey: lastCheckKey) as? Date,
@@ -85,25 +63,17 @@ final class UpdateChecker: ObservableObject {
             }
 
             do {
-                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let tagName = json["tag_name"] as? String,
-                      let htmlURL = json["html_url"] as? String else {
-                    DispatchQueue.main.async { completion(false) }
-                    return
-                }
-
-                let remote = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                let remote = release.tagName.trimmingCharacters(in: .init(charactersIn: "vV"))
                 let local = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-
                 let available = Self.compareVersions(remote, isGreaterThan: local)
-
-                let body = json["body"] as? String ?? ""
 
                 DispatchQueue.main.async {
                     self.latestVersion = remote
-                    self.releaseURL = htmlURL
-                    self.releaseBody = body
+                    self.releaseURL = release.htmlURL
+                    self.releaseBody = release.body ?? ""
                     self.updateAvailable = available
+                    self.downloadURL = release.assets.first { $0.name.hasSuffix(".zip") }?.browserDownloadURL
                     UserDefaults.standard.set(Date(), forKey: self.lastCheckKey)
                     completion(available)
                 }
@@ -113,61 +83,125 @@ final class UpdateChecker: ObservableObject {
         }.resume()
     }
 
-    // MARK: - Brew Upgrade
+    // MARK: - Download and Install
 
-    /// Fully-qualified cask name to avoid "exists in multiple taps" errors.
-    private let caskName = "zerry-lab/tap/dockpeek"
+    private var downloadURL: String?
 
-    /// Runs Homebrew upgrade in the background, reporting progress via `upgradeState`.
-    /// Does NOT terminate the app -- the UI shows a "Restart" button on completion.
-    func performBrewUpgrade() {
-        guard let brew = brewPath else {
-            upgradeState = .failed("Homebrew not found")
-            return
-        }
-        guard upgradeState != .updating else { return }
+    /// Download the latest release ZIP, extract, verify, and replace the running app.
+    func downloadAndInstall() {
+        guard case .idle = upgradeState, let urlString = downloadURL,
+              let url = URL(string: urlString) else { return }
 
-        upgradeState = .updating
+        upgradeState = .downloading(0)
 
-        let script = """
-        \(brew) tap zerry-lab/tap 2>/dev/null; \(brew) upgrade --cask \(caskName) 2>&1 || \(brew) reinstall --cask \(caskName) 2>&1
-        """
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", script]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        process.terminationHandler = { [weak self] proc in
+        URLSession.shared.downloadTask(with: url) { [weak self] tempZip, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if proc.terminationStatus == 0 {
-                    self.upgradeState = .completed
-                    self.updateAvailable = false
-                } else {
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8) ?? ""
-                    let lastLine = output.split(separator: "\n").last.map(String.init) ?? "Exit code \(proc.terminationStatus)"
-                    self.upgradeState = .failed(lastLine)
+
+                guard let tempZip, error == nil else {
+                    self.upgradeState = .failed(error?.localizedDescription ?? "Download failed")
+                    return
                 }
+
+                self.upgradeState = .downloading(0.5)
+                self.installFromZip(tempZip)
             }
-        }
+        }.resume()
+    }
+
+    private func installFromZip(_ zipURL: URL) {
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory.appendingPathComponent("DockPeekUpdate-\(UUID().uuidString)")
 
         do {
-            try process.run()
+            try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            // Unzip
+            let unzip = Process()
+            unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+            unzip.arguments = ["-o", zipURL.path, "-d", tempDir.path]
+            unzip.standardOutput = FileHandle.nullDevice
+            unzip.standardError = FileHandle.nullDevice
+            try unzip.run()
+            unzip.waitUntilExit()
+
+            guard unzip.terminationStatus == 0 else {
+                try? fm.removeItem(at: tempDir)
+                upgradeState = .failed("Failed to extract update")
+                return
+            }
+
+            upgradeState = .downloading(0.7)
+
+            // Find .app bundle
+            let contents = try fm.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
+            guard let appBundle = contents.first(where: { $0.pathExtension == "app" }) else {
+                try? fm.removeItem(at: tempDir)
+                upgradeState = .failed("No app found in archive")
+                return
+            }
+
+            // Verify code signature
+            guard verifyCodeSignature(of: appBundle) else {
+                try? fm.removeItem(at: tempDir)
+                upgradeState = .failed("Code signature verification failed")
+                return
+            }
+
+            upgradeState = .downloading(0.85)
+
+            // Replace app: backup old → move new → cleanup
+            let appPath = URL(fileURLWithPath: "/Applications/DockPeek.app")
+            let backupDir = fm.temporaryDirectory.appendingPathComponent("DockPeek-backup-\(UUID().uuidString)")
+
+            var hasBackup = false
+            if fm.fileExists(atPath: appPath.path) {
+                try fm.moveItem(at: appPath, to: backupDir)
+                hasBackup = true
+            }
+
+            do {
+                try fm.moveItem(at: appBundle, to: appPath)
+            } catch {
+                if hasBackup { try? fm.moveItem(at: backupDir, to: appPath) }
+                try? fm.removeItem(at: tempDir)
+                upgradeState = .failed("Failed to install: \(error.localizedDescription)")
+                return
+            }
+
+            if hasBackup { try? fm.removeItem(at: backupDir) }
+            try? fm.removeItem(at: tempDir)
+
+            upgradeState = .completed
+            updateAvailable = false
+
         } catch {
+            try? fm.removeItem(at: tempDir)
             upgradeState = .failed(error.localizedDescription)
         }
     }
 
-    /// Relaunch the app after a successful upgrade.
+    private func verifyCodeSignature(of appURL: URL) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = ["--verify", "--deep", "--strict", appURL.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    // MARK: - Relaunch
+
     func relaunchApp() {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", "sleep 0.5 && open -a DockPeek"]
+        task.arguments = ["-c", "sleep 0.5 && open /Applications/DockPeek.app"]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         try? task.run()
@@ -177,14 +211,12 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Reset upgrade state back to idle.
     func resetUpgradeState() {
         upgradeState = .idle
     }
 
     // MARK: - Semantic Version Comparison
 
-    /// Returns true if `a` is strictly greater than `b` using semantic versioning.
     static func compareVersions(_ a: String, isGreaterThan b: String) -> Bool {
         let aParts = a.split(separator: ".").compactMap { Int($0) }
         let bParts = b.split(separator: ".").compactMap { Int($0) }
@@ -197,5 +229,31 @@ final class UpdateChecker: ObservableObject {
             if av < bv { return false }
         }
         return false
+    }
+}
+
+// MARK: - GitHub API Models
+
+private struct GitHubRelease: Decodable {
+    let tagName: String
+    let htmlURL: String
+    let body: String?
+    let assets: [GitHubAsset]
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+        case body
+        case assets
+    }
+}
+
+private struct GitHubAsset: Decodable {
+    let name: String
+    let browserDownloadURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadURL = "browser_download_url"
     }
 }
