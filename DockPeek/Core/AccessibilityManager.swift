@@ -15,7 +15,8 @@ final class AccessibilityManager {
         ]
         for urlString in candidates {
             if let url = URL(string: urlString),
-               NSWorkspace.shared.open(url) {
+               NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+                NSWorkspace.shared.open(url)
                 return
             }
         }
