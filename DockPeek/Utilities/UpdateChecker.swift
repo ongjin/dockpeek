@@ -115,6 +115,9 @@ final class UpdateChecker: ObservableObject {
 
     // MARK: - Brew Upgrade
 
+    /// Fully-qualified cask name to avoid "exists in multiple taps" errors.
+    private let caskName = "zerry-lab/tap/dockpeek"
+
     /// Runs Homebrew upgrade in the background, reporting progress via `upgradeState`.
     /// Does NOT terminate the app -- the UI shows a "Restart" button on completion.
     func performBrewUpgrade() {
@@ -127,7 +130,7 @@ final class UpdateChecker: ObservableObject {
         upgradeState = .updating
 
         let script = """
-        \(brew) update && \(brew) upgrade --cask dockpeek
+        \(brew) tap zerry-lab/tap 2>/dev/null; \(brew) upgrade --cask \(caskName) 2>&1 || \(brew) reinstall --cask \(caskName) 2>&1
         """
 
         let process = Process()
