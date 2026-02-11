@@ -311,6 +311,13 @@ final class WindowManager {
         AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)
         AXUIElementSetAttributeValue(axWindow, kAXMainAttribute as CFString, kCFBooleanTrue)
 
+        // Set this window as the app's focused window so keyboard input goes to it
+        let axApp = AXUIElementCreateApplication(pid)
+        AXUIElementSetAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, axWindow)
+
+        // Ensure the app is frontmost with keyboard focus
+        app?.activate()
+
         dpLog("Activated window \(windowID) for PID \(pid)")
     }
 
