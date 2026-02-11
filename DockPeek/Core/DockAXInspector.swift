@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 
 final class DockAXInspector {
 
@@ -50,12 +49,10 @@ final class DockAXInspector {
 
         // 4. Resolve bundle ID from URL
         var bundleID: String?
-        var appURL: URL?
 
         if let urlRef = axValue(dockItem, kAXURLAttribute),
            CFGetTypeID(urlRef as CFTypeRef) == CFURLGetTypeID() {
             let cfURL = urlRef as! CFURL  // Safe: CFTypeID already verified above
-            appURL = cfURL as URL
             bundleID = Bundle(url: cfURL as URL)?.bundleIdentifier
         }
 
@@ -83,7 +80,7 @@ final class DockAXInspector {
         }
 
         dpLog("Resolved: \(title) bundle=\(bundleID ?? "nil") pid=\(pid.map(String.init) ?? "nil") running=\(isRunning)")
-        return DockApp(bundleIdentifier: bundleID, name: title, url: appURL, pid: pid, isRunning: isRunning)
+        return DockApp(bundleIdentifier: bundleID, name: title, pid: pid, isRunning: isRunning)
     }
 
     // MARK: - Helpers

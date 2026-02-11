@@ -1,6 +1,5 @@
 import SwiftUI
 import Combine
-import ServiceManagement
 
 final class AppState: ObservableObject {
     @AppStorage("isEnabled") var isEnabled = true
@@ -11,16 +10,23 @@ final class AppState: ObservableObject {
     @AppStorage("forceNewWindowsToPrimary") var forceNewWindowsToPrimary = false
     @AppStorage("previewOnHover") var previewOnHover = false
     @AppStorage("hoverDelay") var hoverDelay: Double = 0.5
-    @AppStorage("excludedBundleIDs") var excludedBundleIDsRaw = ""
+    @AppStorage("excludedBundleIDs") var excludedBundleIDsRaw = "" {
+        didSet { cachedExcludedBundleIDs = Self.parseExcludedIDs(excludedBundleIDsRaw) }
+    }
     @AppStorage("appLanguage") var language: String = "en"
+    @AppStorage("autoUpdateEnabled") var autoUpdateEnabled = true
+    @AppStorage("updateCheckInterval") var updateCheckInterval = "daily" // "daily", "weekly", "manual"
+
+    private lazy var cachedExcludedBundleIDs: Set<String> = Self.parseExcludedIDs(excludedBundleIDsRaw)
+
+    private static func parseExcludedIDs(_ raw: String) -> Set<String> {
+        Set(raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty })
+    }
 
     var excludedBundleIDs: Set<String> {
-        get {
-            Set(excludedBundleIDsRaw
-                .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty })
-        }
+        get { cachedExcludedBundleIDs }
         set {
             excludedBundleIDsRaw = newValue.sorted().joined(separator: ", ")
         }
@@ -28,6 +34,6 @@ final class AppState: ObservableObject {
 
     func isExcluded(bundleID: String?) -> Bool {
         guard let bundleID else { return false }
-        return excludedBundleIDs.contains(bundleID)
+        return cachedExcludedBundleIDs.contains(bundleID)
     }
 }

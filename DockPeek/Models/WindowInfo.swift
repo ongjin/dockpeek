@@ -1,5 +1,4 @@
 import AppKit
-import CoreGraphics
 
 struct WindowInfo: Identifiable {
     let id: CGWindowID

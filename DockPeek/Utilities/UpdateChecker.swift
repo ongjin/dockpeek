@@ -1,16 +1,36 @@
 import AppKit
+import Combine
 
-final class UpdateChecker {
+enum UpgradeState: Equatable {
+    case idle
+    case updating
+    case completed
+    case failed(String)
+
+    var isTerminal: Bool {
+        switch self {
+        case .completed, .failed: return true
+        default: return false
+        }
+    }
+}
+
+final class UpdateChecker: ObservableObject {
 
     static let shared = UpdateChecker()
 
-    private(set) var updateAvailable = false
-    private(set) var latestVersion = ""
-    private(set) var releaseURL = ""
+    @Published private(set) var updateAvailable = false
+    @Published private(set) var latestVersion = ""
+    @Published private(set) var releaseURL = ""
+    @Published private(set) var releaseBody = ""
+    @Published private(set) var upgradeState: UpgradeState = .idle
 
     private let repoAPI = "https://api.github.com/repos/ongjin/dockpeek/releases/latest"
-    private let lastCheckKey = "lastUpdateCheckTime"
-    private let checkInterval: TimeInterval = 24 * 60 * 60 // 24 hours
+    let lastCheckKey = "lastUpdateCheckTime"
+
+    var lastCheckDate: Date? {
+        UserDefaults.standard.object(forKey: lastCheckKey) as? Date
+    }
 
     /// Resolved Homebrew binary path, or nil if not installed.
     lazy var brewPath: String? = {
@@ -25,12 +45,26 @@ final class UpdateChecker {
 
     private init() {}
 
+    // MARK: - Interval
+
+    /// Returns the check interval in seconds based on the user's setting.
+    /// Returns nil for "manual" (no automatic checking).
+    static func intervalForSetting(_ setting: String) -> TimeInterval? {
+        switch setting {
+        case "daily":  return 24 * 60 * 60
+        case "weekly": return 7 * 24 * 60 * 60
+        default:       return nil // manual
+        }
+    }
+
     // MARK: - Public
 
-    /// Check for updates. `force` bypasses the 24-hour cooldown.
-    func check(force: Bool = false, completion: @escaping (Bool) -> Void) {
-        if !force, let last = UserDefaults.standard.object(forKey: lastCheckKey) as? Date,
-           Date().timeIntervalSince(last) < checkInterval {
+    /// Check for updates. `force` bypasses the cooldown.
+    /// `intervalSetting` should be "daily", "weekly", or "manual".
+    func check(force: Bool = false, intervalSetting: String = "daily", completion: @escaping (Bool) -> Void) {
+        if !force, let interval = Self.intervalForSetting(intervalSetting),
+           let last = UserDefaults.standard.object(forKey: lastCheckKey) as? Date,
+           Date().timeIntervalSince(last) < interval {
             completion(updateAvailable)
             return
         }
@@ -63,9 +97,12 @@ final class UpdateChecker {
 
                 let available = Self.compareVersions(remote, isGreaterThan: local)
 
+                let body = json["body"] as? String ?? ""
+
                 DispatchQueue.main.async {
                     self.latestVersion = remote
                     self.releaseURL = htmlURL
+                    self.releaseBody = body
                     self.updateAvailable = available
                     UserDefaults.standard.set(Date(), forKey: self.lastCheckKey)
                     completion(available)
@@ -78,33 +115,68 @@ final class UpdateChecker {
 
     // MARK: - Brew Upgrade
 
-    /// Launches a detached shell that upgrades DockPeek via Homebrew, then re-opens the app.
-    /// The current process is terminated so Homebrew can replace the app bundle.
+    /// Runs Homebrew upgrade in the background, reporting progress via `upgradeState`.
+    /// Does NOT terminate the app -- the UI shows a "Restart" button on completion.
     func performBrewUpgrade() {
-        guard let brew = brewPath else { return }
+        guard let brew = brewPath else {
+            upgradeState = .failed("Homebrew not found")
+            return
+        }
+        guard upgradeState != .updating else { return }
 
-        // Shell script: upgrade cask, then relaunch. Runs independently of this process.
+        upgradeState = .updating
+
         let script = """
-        \(brew) update && \(brew) upgrade --cask dockpeek && open -a DockPeek
+        \(brew) update && \(brew) upgrade --cask dockpeek
         """
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", script]
-        // Prevent child from inheriting our stdout/stderr (detach cleanly)
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        process.terminationHandler = { [weak self] proc in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if proc.terminationStatus == 0 {
+                    self.upgradeState = .completed
+                    self.updateAvailable = false
+                } else {
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: data, encoding: .utf8) ?? ""
+                    let lastLine = output.split(separator: "\n").last.map(String.init) ?? "Exit code \(proc.terminationStatus)"
+                    self.upgradeState = .failed(lastLine)
+                }
+            }
+        }
+
         do {
             try process.run()
         } catch {
-            dpLog("Failed to start brew upgrade: \(error)")
-            return
+            upgradeState = .failed(error.localizedDescription)
         }
+    }
 
-        // Give the process a moment to start, then quit
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+    /// Relaunch the app after a successful upgrade.
+    func relaunchApp() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "sleep 0.5 && open -a DockPeek"]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    /// Reset upgrade state back to idle.
+    func resetUpgradeState() {
+        upgradeState = .idle
     }
 
     // MARK: - Semantic Version Comparison

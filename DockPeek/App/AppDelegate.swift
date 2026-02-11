@@ -25,21 +25,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private static let idlePollInterval: TimeInterval = 0.25   // 4 Hz
     private static let activePollInterval: TimeInterval = 0.066 // ~15 Hz
     fileprivate var cachedDockRect: CGRect = .zero
-    fileprivate var previewIsVisible = false
+    fileprivate var previewIsVisible = false {
+        didSet { windowManager.isPreviewVisible = previewIsVisible }
+    }
     private var cmdCommaMonitor: Any?
     private var hoverTimer: DispatchWorkItem?
     private var hoverDismissTimer: DispatchWorkItem?
     private var lastHoveredBundleID: String?
     private var hoverSettingObserver: AnyCancellable?
 
+    // AX hit-test cache: avoid redundant AX calls for same position within 100ms
+    private var cachedAXHitResult: (point: CGPoint, result: DockApp?, timestamp: Date)?
+    private let axHitCacheTTL: TimeInterval = 0.1
+
+    // Mouse position tracking: skip processing when mouse hasn't moved
+    private var lastPollMouseLocation: CGPoint?
+    private var lastPollInDock = false
+
     // MARK: - Lifecycle
 
     func applicationWillTerminate(_ notification: Notification) {
         eventTapManager.stop()
         stopHoverMonitor()
+        hoverSettingObserver?.cancel()
+        hoverSettingObserver = nil
         permissionMonitorTimer?.invalidate()
         accessibilityTimer?.invalidate()
         if let m = cmdCommaMonitor { NSEvent.removeMonitor(m) }
+
+        // Remove notification observers
+        NotificationCenter.default.removeObserver(self, name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.removeObserver(self, name: NSWorkspace.didLaunchApplicationNotification, object: nil)
+
+        // Clean up all AX observers
+        for pid in axObservers.keys {
+            removeAXObserver(pid: pid)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -59,9 +80,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         observeHoverSetting()
 
-        // Auto-check for updates (respects 24-hour cooldown)
-        updateChecker.check(force: false) { [weak self] available in
-            if available { self?.showUpdateAlert() }
+        // Auto-check for updates (respects cooldown, interval, and user setting)
+        if appState.autoUpdateEnabled && appState.updateCheckInterval != "manual" {
+            updateChecker.check(force: false, intervalSetting: appState.updateCheckInterval) { [weak self] available in
+                if available { self?.notifyUpdateAvailable() }
+            }
         }
     }
 
@@ -109,51 +132,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     // MARK: - Update Check
 
     @objc private func checkForUpdates() {
-        updateChecker.check(force: true) { [weak self] available in
+        updateChecker.check(force: true, intervalSetting: appState.updateCheckInterval) { [weak self] available in
             if available {
-                self?.showUpdateAlert()
+                self?.openSettings()
             } else {
                 self?.showUpToDateAlert()
             }
         }
     }
 
-    private func showUpdateAlert() {
-        let local = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let remote = updateChecker.latestVersion
-        let hasBrew = updateChecker.isBrewInstalled
-
-        let alert = NSAlert()
-        alert.messageText = L10n.updateAvailable
-        alert.informativeText = String(format: L10n.updateMessage, remote, local)
-            + (hasBrew ? "\n\n" + L10n.autoUpdateHint : "\n\n" + L10n.brewHint)
-        alert.alertStyle = .informational
-
-        if hasBrew {
-            alert.addButton(withTitle: L10n.autoUpdate) // First button
-            alert.addButton(withTitle: L10n.later)
-            alert.addButton(withTitle: L10n.download)   // Fallback
-        } else {
-            alert.addButton(withTitle: L10n.download)
-            alert.addButton(withTitle: L10n.later)
-        }
-
-        NSApp.activate()
-        let response = alert.runModal()
-
-        if hasBrew {
-            if response == .alertFirstButtonReturn {
-                updateChecker.performBrewUpgrade()
-            } else if response == .alertThirdButtonReturn,
-                      let url = URL(string: updateChecker.releaseURL) {
-                NSWorkspace.shared.open(url)
-            }
-        } else {
-            if response == .alertFirstButtonReturn,
-               let url = URL(string: updateChecker.releaseURL) {
-                NSWorkspace.shared.open(url)
-            }
-        }
+    /// Called when an automatic update check finds a new version.
+    /// Opens the Settings window on the Update tab instead of a modal alert.
+    private func notifyUpdateAvailable() {
+        openSettings()
     }
 
     private func showUpToDateAlert() {
@@ -181,10 +172,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         let settingsView = SettingsView(appState: appState)
         let hostingView = NSHostingView(rootView: settingsView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 480, height: 520)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 480, height: 560)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false
         )
@@ -259,12 +250,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     // MARK: - Hover Monitor
 
-    /// Observe previewOnHover toggle — start/stop monitor dynamically
+    /// Observe previewOnHover toggle — start/stop monitor dynamically.
+    /// Uses targeted UserDefaults KVO instead of objectWillChange to avoid
+    /// reacting to every AppState property change.
     private func observeHoverSetting() {
-        hoverSettingObserver = appState.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async {
+        hoverSettingObserver = NotificationCenter.default
+            .publisher(for: UserDefaults.didChangeNotification)
+            .compactMap { [weak self] _ -> Bool? in self?.appState.previewOnHover }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
                 guard let self else { return }
-                if self.appState.previewOnHover {
+                if enabled {
                     if self.hoverPollTimer == nil,
                        AccessibilityManager.shared.isAccessibilityGranted {
                         self.startHoverMonitor()
@@ -273,7 +270,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                     self.stopHoverMonitor()
                 }
             }
-        }
     }
 
     private func startHoverMonitor() {
@@ -300,11 +296,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         hoverDismissTimer?.cancel()
         hoverDismissTimer = nil
         lastHoveredBundleID = nil
+        lastPollMouseLocation = nil
+        lastPollInDock = false
+        cachedAXHitResult = nil
         previewIsVisible = false
     }
 
     /// Lightweight poll: reads NSEvent.mouseLocation and checks dock proximity.
     /// Adapts timer interval based on whether mouse is near dock or preview is visible.
+    /// Skips processing if mouse position and dock-area state haven't changed.
     private func pollMousePosition() {
         let cocoaLoc = NSEvent.mouseLocation
         let screenH = NSScreen.screens.first?.frame.height ?? 0
@@ -322,9 +322,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             dpLog("Poll interval → \(desired)s")
         }
 
+        // Skip processing if mouse hasn't moved and dock-area status unchanged
+        if let lastLoc = lastPollMouseLocation,
+           lastLoc.x == cgPoint.x, lastLoc.y == cgPoint.y,
+           lastPollInDock == inDock {
+            return
+        }
+        lastPollMouseLocation = cgPoint
+        lastPollInDock = inDock
+
         // Only process when near dock or preview is visible
         if needsActive {
-            processHoverEvent()
+            processHoverEvent(cgPoint: cgPoint)
         }
     }
 
@@ -371,13 +380,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         updateCachedDockRect()
     }
 
-    /// Called from the CGEvent tap callback (on main thread) when mouse is near the dock or preview panel.
-    fileprivate func processHoverEvent() {
+    /// Called from the poll timer when mouse is near the dock or preview panel.
+    /// Accepts pre-computed cgPoint to avoid redundant coordinate conversion.
+    fileprivate func processHoverEvent(cgPoint: CGPoint) {
         guard appState.previewOnHover else { return }
 
-        let cocoaLoc = NSEvent.mouseLocation
+        // Convert CG point back to Cocoa for panel frame check
         let screenH = NSScreen.screens.first?.frame.height ?? 0
-        let cgPoint = CGPoint(x: cocoaLoc.x, y: screenH - cocoaLoc.y)
+        let cocoaLoc = NSPoint(x: cgPoint.x, y: screenH - cgPoint.y)
 
         // If mouse is over the preview panel, cancel any pending dismiss and let user interact
         if previewPanel.isVisible, previewPanel.frame.contains(cocoaLoc) {
@@ -387,7 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         }
 
         let inDock = isPointInDockArea(cgPoint)
-        let dockApp = inDock ? dockInspector.appAtPoint(cgPoint) : nil
+        let dockApp = inDock ? cachedAppAtPoint(cgPoint) : nil
 
         // Mouse is outside both dock and preview panel
         if !inDock || dockApp == nil {
@@ -459,6 +469,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             hoverTimer = task
             DispatchQueue.main.asyncAfter(deadline: .now() + appState.hoverDelay, execute: task)
         }
+    }
+
+    /// Cached AX hit-test: returns cached result if same position within 100ms TTL
+    private func cachedAppAtPoint(_ point: CGPoint) -> DockApp? {
+        let now = Date()
+        if let cached = cachedAXHitResult,
+           cached.point.x == point.x, cached.point.y == point.y,
+           now.timeIntervalSince(cached.timestamp) < axHitCacheTTL {
+            return cached.result
+        }
+        let result = dockInspector.appAtPoint(point)
+        cachedAXHitResult = (point: point, result: result, timestamp: now)
+        return result
     }
 
     private func handleHoverPreview(for pid: pid_t, at point: CGPoint) {
@@ -698,12 +721,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         // Backup: AXObserver for apps launched via Spotlight/Launchpad (not through Dock click).
         // The primary strategy (cursor warp in event tap) handles Dock launches.
         let callback: AXObserverCallback = { _, element, _, _ in
-            guard let primary = NSScreen.screens.first else { return }
-            let pH = primary.frame.height
-            let vis = primary.visibleFrame
-            let primaryCG = CGRect(x: primary.frame.minX, y: pH - primary.frame.maxY,
-                                   width: primary.frame.width, height: primary.frame.height)
-
             // Try element as window first, fall back to focused window
             var axWin: AXUIElement = element
             var posRef: AnyObject?
@@ -713,25 +730,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 guard let focused = focusedRef else { return }
                 let axFocused = focused as! AXUIElement
                 axWin = axFocused
-                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
             }
-
-            var curPos = CGPoint.zero
-            if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &curPos) }
-            if primaryCG.contains(curPos) { return }
-
-            var sizeRef: AnyObject?
-            AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
-            var winSize = CGSize(width: 800, height: 600)
-            if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &winSize) }
-
-            var newPos = CGPoint(
-                x: vis.minX + (vis.width - winSize.width) / 2,
-                y: (pH - vis.maxY) + (vis.height - winSize.height) / 2
-            )
-            if let axPos = AXValueCreate(.cgPoint, &newPos) {
-                AXUIElementSetAttributeValue(axWin, kAXPositionAttribute as CFString, axPos)
-            }
+            moveAXWindowToPrimaryIfNeeded(axWin)
         }
 
         // Clean up existing observer for this PID if any
@@ -746,17 +746,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
         axObservers[pid] = observer
 
-        // Also observe app termination to clean up immediately
-        var terminateToken: NSObjectProtocol?
-        terminateToken = NSWorkspace.shared.notificationCenter.addObserver(
+        // Also observe app termination to clean up immediately.
+        // Use a class-based box to avoid a retain cycle between the closure
+        // and the local variable that holds the notification token.
+        class TokenBox { var token: NSObjectProtocol? }
+        let tokenBox = TokenBox()
+        tokenBox.token = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification,
             object: nil, queue: .main
-        ) { [weak self] note in
+        ) { [weak self, weak tokenBox] note in
             guard let terminated = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   terminated.processIdentifier == pid else { return }
             self?.removeAXObserver(pid: pid)
-            if let token = terminateToken {
+            if let token = tokenBox?.token {
                 NSWorkspace.shared.notificationCenter.removeObserver(token)
+                tokenBox?.token = nil
             }
         }
 
@@ -771,47 +775,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak tokenBox] in
             self?.removeAXObserver(pid: pid)
-            if let token = terminateToken {
+            if let token = tokenBox?.token {
                 NSWorkspace.shared.notificationCenter.removeObserver(token)
-                terminateToken = nil
+                tokenBox?.token = nil
             }
         }
     }
 
     /// Move the focused window of an app to primary screen if it's not already there.
     private func moveAppWindowToPrimaryIfNeeded(axApp: AXUIElement) {
-        guard let primary = NSScreen.screens.first else { return }
-        let pH = primary.frame.height
-        let vis = primary.visibleFrame
-        let primaryCG = CGRect(x: primary.frame.minX, y: pH - primary.frame.maxY,
-                               width: primary.frame.width, height: primary.frame.height)
-
         var focusedRef: AnyObject?
         AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedRef)
         guard let focusedVal = focusedRef else { return }
         let win = focusedVal as! AXUIElement
-
-        var posRef: AnyObject?
-        AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef)
-        var pos = CGPoint.zero
-        if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
-        guard !primaryCG.contains(pos) else { return }
-
-        var sizeRef: AnyObject?
-        AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef)
-        var sz = CGSize(width: 800, height: 600)
-        if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &sz) }
-
-        var newPos = CGPoint(
-            x: vis.minX + (vis.width - sz.width) / 2,
-            y: (pH - vis.maxY) + (vis.height - sz.height) / 2
-        )
-        if let axPos = AXValueCreate(.cgPoint, &newPos) {
-            AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, axPos)
-            dpLog("Polled and moved window to primary")
-        }
+        moveAXWindowToPrimaryIfNeeded(win)
     }
 
     private func removeAXObserver(pid: pid_t) {
@@ -824,9 +803,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private func showPreviewForWindows(_ windows: [WindowInfo], at point: CGPoint) {
         previewIsVisible = true
         let thumbSize = CGFloat(appState.thumbnailSize)
+
+        // Separate cache hits (synchronous) from cache misses (background)
         var enriched = windows
+        var missIndices: [Int] = []
         for i in enriched.indices {
-            enriched[i].thumbnail = windowManager.thumbnail(for: enriched[i].id, maxSize: thumbSize)
+            if let cached = windowManager.thumbnail(for: enriched[i].id, maxSize: thumbSize) {
+                enriched[i].thumbnail = cached
+            } else {
+                missIndices.append(i)
+            }
+        }
+
+        // Generate missing thumbnails in background, then update UI on main thread.
+        // CGWindowListCreateImage is the expensive call and is thread-safe.
+        // WindowManager.thumbnail() handles caching, so we call it on main after
+        // the background work primes the system (the OS caches the window bitmap).
+        if !missIndices.isEmpty {
+            let windowIDs = missIndices.map { enriched[$0].id }
+            DispatchQueue.global(qos: .userInitiated).async {
+                // Prime window captures in parallel — the OS caches these bitmaps
+                for wid in windowIDs {
+                    _ = CGWindowListCreateImage(
+                        .null, .optionIncludingWindow, wid,
+                        [.boundsIgnoreFraming, .nominalResolution]
+                    )
+                }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.previewIsVisible else { return }
+                    for i in missIndices {
+                        enriched[i].thumbnail = self.windowManager.thumbnail(
+                            for: enriched[i].id, maxSize: thumbSize
+                        )
+                    }
+                    self.previewPanel.updateThumbnails(enriched)
+                }
+            }
         }
 
         previewPanel.showPreview(
@@ -874,3 +886,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 }
 
+// MARK: - Primary Screen Move Helper
+
+/// Move an AX window to the center of the primary screen if it's not already there.
+/// Free function so it can be called from both the AXObserverCallback (C function)
+/// and from AppDelegate instance methods.
+private func moveAXWindowToPrimaryIfNeeded(_ axWindow: AXUIElement) {
+    guard let primary = NSScreen.screens.first else { return }
+    let pH = primary.frame.height
+    let vis = primary.visibleFrame
+    let primaryCG = CGRect(x: primary.frame.minX, y: pH - primary.frame.maxY,
+                           width: primary.frame.width, height: primary.frame.height)
+
+    var posRef: AnyObject?
+    AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &posRef)
+    var pos = CGPoint.zero
+    if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+    guard !primaryCG.contains(pos) else { return }
+
+    var sizeRef: AnyObject?
+    AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeRef)
+    var sz = CGSize(width: 800, height: 600)
+    if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &sz) }
+
+    var newPos = CGPoint(
+        x: vis.minX + (vis.width - sz.width) / 2,
+        y: (pH - vis.maxY) + (vis.height - sz.height) / 2
+    )
+    if let axPos = AXValueCreate(.cgPoint, &newPos) {
+        AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, axPos)
+        dpLog("Moved window to primary screen center")
+    }
+}

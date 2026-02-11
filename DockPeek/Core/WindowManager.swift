@@ -1,6 +1,4 @@
 import AppKit
-import CoreGraphics
-import ApplicationServices
 
 // Private/deprecated API wrappers loaded at runtime via dlsym
 private let skylight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
@@ -29,7 +27,19 @@ final class WindowManager {
     /// Thumbnail cache: windowID → (image, timestamp)
     private var thumbnailCache: [CGWindowID: (NSImage, Date)] = [:]
     private let cacheTTL: TimeInterval = 5.0
+    private let extendedCacheTTL: TimeInterval = 10.0
     private let maxCacheSize = 30
+
+    /// Whether preview panel is currently visible — set by AppDelegate to extend cache TTL
+    var isPreviewVisible = false
+
+    /// CGWindowListCopyWindowInfo result cache: pid → (result, timestamp)
+    private var windowListCache: [pid_t: ([[String: Any]], Date)] = [:]
+    private let windowListCacheTTL: TimeInterval = 0.5
+
+    /// AX window IDs cache: pid → (ids, timestamp)
+    private var axWindowIDsCache: [pid_t: (Set<CGWindowID>, Date)] = [:]
+    private let axWindowIDsCacheTTL: TimeInterval = 1.0
 
     // MARK: - Window Enumeration
 
@@ -37,11 +47,20 @@ final class WindowManager {
     /// Cross-references CGWindow list with AXUIElement windows to filter out
     /// overlays, helper windows, and other non-standard windows (e.g. Chrome translation bar).
     func windowsForApp(pid: pid_t, includeMinimized: Bool = false) -> [WindowInfo] {
-        guard let list = CGWindowListCopyWindowInfo(
-            [.optionAll, .excludeDesktopElements], kCGNullWindowID
-        ) as? [[String: Any]] else {
-            dpLog("CGWindowListCopyWindowInfo failed")
-            return []
+        let list: [[String: Any]]
+        let now = Date()
+        if let cached = windowListCache[pid],
+           now.timeIntervalSince(cached.1) < windowListCacheTTL {
+            list = cached.0
+        } else {
+            guard let fetched = CGWindowListCopyWindowInfo(
+                [.optionAll, .excludeDesktopElements], kCGNullWindowID
+            ) as? [[String: Any]] else {
+                dpLog("CGWindowListCopyWindowInfo failed")
+                return []
+            }
+            list = fetched
+            windowListCache[pid] = (fetched, now)
         }
 
         var windows: [WindowInfo] = []
@@ -95,7 +114,14 @@ final class WindowManager {
 
     /// Get the set of CGWindowIDs that correspond to real standard AX windows.
     /// Filters out popups, dialogs, floating panels, overlays (e.g. Chrome translation bar).
+    /// Results are cached for 1 second to avoid redundant AX IPC calls.
     private func axWindowIDs(for pid: pid_t) -> Set<CGWindowID> {
+        let now = Date()
+        if let cached = axWindowIDsCache[pid],
+           now.timeIntervalSince(cached.1) < axWindowIDsCacheTTL {
+            return cached.0
+        }
+
         guard let getWindow = _axGetWindow else { return [] }
         let axApp = AXUIElementCreateApplication(pid)
         var ref: AnyObject?
@@ -118,22 +144,26 @@ final class WindowManager {
                 ids.insert(wid)
             }
         }
+        axWindowIDsCache[pid] = (ids, now)
         return ids
     }
 
     // MARK: - Thumbnails
 
     func thumbnail(for windowID: CGWindowID, maxSize: CGFloat = 200) -> NSImage? {
+        // Use extended TTL while preview panel is open to reduce redundant captures
+        let effectiveTTL = isPreviewVisible ? extendedCacheTTL : cacheTTL
+
         // Check cache
         if let cached = thumbnailCache[windowID],
-           Date().timeIntervalSince(cached.1) < cacheTTL {
+           Date().timeIntervalSince(cached.1) < effectiveTTL {
             return cached.0
         }
 
         // Prune expired entries and enforce size limit
         let now = Date()
         if thumbnailCache.count > maxCacheSize {
-            thumbnailCache = thumbnailCache.filter { now.timeIntervalSince($0.value.1) < cacheTTL }
+            thumbnailCache = thumbnailCache.filter { now.timeIntervalSince($0.value.1) < effectiveTTL }
             // Still over limit — remove oldest entries
             if thumbnailCache.count >= maxCacheSize {
                 let sorted = thumbnailCache.sorted { $0.value.1 < $1.value.1 }
@@ -168,38 +198,49 @@ final class WindowManager {
         return result
     }
 
+    // MARK: - AX Window Matching
+
+    /// Find the AXUIElement for a given CGWindowID by matching against AX windows.
+    /// Uses private API _AXUIElementGetWindow for 100% reliable matching.
+    private func findAXWindow(for windowID: CGWindowID, pid: pid_t) -> AXUIElement? {
+        let axApp = AXUIElementCreateApplication(pid)
+        var windowsRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let axWindows = windowsRef as? [AXUIElement] else { return nil }
+
+        guard let getWindow = _axGetWindow else { return nil }
+        for axWin in axWindows {
+            var axWID: CGWindowID = 0
+            if getWindow(axWin, &axWID) == .success, axWID == windowID {
+                return axWin
+            }
+        }
+        return nil
+    }
+
     // MARK: - Window Activation
 
     func activateWindow(windowID: CGWindowID, pid: pid_t) {
-        let axApp = AXUIElementCreateApplication(pid)
         let app = NSRunningApplication(processIdentifier: pid)
 
-        // 1. Get AX windows
-        var windowsRef: AnyObject?
-        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let axWindows = windowsRef as? [AXUIElement], !axWindows.isEmpty else {
-            dpLog("Could not get AX windows for PID \(pid) — activating app only")
-            app?.activate()
-            return
+        // 1. Match AX window by CGWindowID (100% reliable via private API)
+        var targetAXWindow = findAXWindow(for: windowID, pid: pid)
+
+        if targetAXWindow != nil {
+            dpLog("Matched by CGWindowID: \(windowID)")
         }
 
-        // 2. Match AX window by CGWindowID (100% reliable via private API)
-        var targetAXWindow: AXUIElement?
-
-        if let getWindow = _axGetWindow {
-            // Direct match: AXUIElement → CGWindowID
-            for axWindow in axWindows {
-                var axWID: CGWindowID = 0
-                if getWindow(axWindow, &axWID) == .success, axWID == windowID {
-                    targetAXWindow = axWindow
-                    dpLog("Matched by CGWindowID: \(windowID)")
-                    break
-                }
-            }
-        }
-
-        // Fallback: title match, then position+size
+        // Fallback: get AX windows list for title/position matching
         if targetAXWindow == nil {
+            let axApp = AXUIElementCreateApplication(pid)
+            var windowsRef: AnyObject?
+            guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+                  let axWindows = windowsRef as? [AXUIElement], !axWindows.isEmpty else {
+                dpLog("Could not get AX windows for PID \(pid) — activating app only")
+                app?.activate()
+                return
+            }
+
             var targetTitle: String?
             var targetBounds: CGRect?
             if let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
@@ -246,11 +287,11 @@ final class WindowManager {
                     }
                 }
             }
-        }
 
-        if targetAXWindow == nil {
-            dpLog("No match — fallback to first AX window")
-            targetAXWindow = axWindows.first
+            if targetAXWindow == nil {
+                dpLog("No match — fallback to first AX window")
+                targetAXWindow = axWindows.first
+            }
         }
 
         guard let axWindow = targetAXWindow else { return }
@@ -273,35 +314,10 @@ final class WindowManager {
         dpLog("Activated window \(windowID) for PID \(pid)")
     }
 
-    func activateApp(pid: pid_t) {
-        NSRunningApplication(processIdentifier: pid)?.activate()
-    }
-
     // MARK: - Close Window
 
     func closeWindow(windowID: CGWindowID, pid: pid_t) {
-        let axApp = AXUIElementCreateApplication(pid)
-
-        var windowsRef: AnyObject?
-        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let axWindows = windowsRef as? [AXUIElement] else {
-            dpLog("closeWindow: could not get AX windows for PID \(pid)")
-            return
-        }
-
-        // Match by CGWindowID (same logic as activateWindow)
-        var target: AXUIElement?
-        if let getWindow = _axGetWindow {
-            for axWin in axWindows {
-                var axWID: CGWindowID = 0
-                if getWindow(axWin, &axWID) == .success, axWID == windowID {
-                    target = axWin
-                    break
-                }
-            }
-        }
-
-        guard let axWindow = target else {
+        guard let axWindow = findAXWindow(for: windowID, pid: pid) else {
             dpLog("closeWindow: no AX match for window \(windowID)")
             return
         }
@@ -321,23 +337,7 @@ final class WindowManager {
     // MARK: - Window Snapping
 
     func snapWindow(windowID: CGWindowID, pid: pid_t, position: SnapPosition) {
-        let axApp = AXUIElementCreateApplication(pid)
-
-        var windowsRef: AnyObject?
-        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let axWindows = windowsRef as? [AXUIElement] else { return }
-
-        var target: AXUIElement?
-        if let getWindow = _axGetWindow {
-            for axWin in axWindows {
-                var axWID: CGWindowID = 0
-                if getWindow(axWin, &axWID) == .success, axWID == windowID {
-                    target = axWin
-                    break
-                }
-            }
-        }
-        guard let axWindow = target else { return }
+        guard let axWindow = findAXWindow(for: windowID, pid: pid) else { return }
 
         // Get current window position to determine which screen it's on
         var posRef: AnyObject?
@@ -379,51 +379,4 @@ final class WindowManager {
         dpLog("Snapped window \(windowID) to \(position)")
     }
 
-    // MARK: - Move to Primary Screen
-
-    /// Move all windows of an app that are NOT on the primary screen to its center.
-    func moveNewWindowsToPrimary(pid: pid_t) {
-        guard let primary = NSScreen.screens.first else { return }
-        let primaryH = primary.frame.height
-        let primaryCG = CGRect(x: primary.frame.minX,
-                               y: primaryH - primary.frame.maxY,
-                               width: primary.frame.width,
-                               height: primary.frame.height)
-
-        let axApp = AXUIElementCreateApplication(pid)
-        var windowsRef: AnyObject?
-        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let axWindows = windowsRef as? [AXUIElement] else { return }
-
-        let vis = primary.visibleFrame
-        let targetCGY = primaryH - vis.maxY
-
-        for axWindow in axWindows {
-            // Get current position
-            var posRef: AnyObject?
-            AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &posRef)
-            var currentPos = CGPoint.zero
-            if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &currentPos) }
-
-            // Skip if already on primary screen
-            if primaryCG.contains(currentPos) { continue }
-
-            // Get window size
-            var sizeRef: AnyObject?
-            AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeRef)
-            var winSize = CGSize.zero
-            if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &winSize) }
-
-            // Center on primary screen's visible area
-            var newPos = CGPoint(
-                x: vis.minX + (vis.width - winSize.width) / 2,
-                y: targetCGY + (vis.height - winSize.height) / 2
-            )
-
-            if let axPos = AXValueCreate(.cgPoint, &newPos) {
-                AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, axPos)
-            }
-            dpLog("Moved window to primary screen for PID \(pid)")
-        }
-    }
 }

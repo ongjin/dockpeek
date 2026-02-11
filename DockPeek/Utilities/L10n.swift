@@ -38,7 +38,9 @@ struct L10n {
     // MARK: - Tabs
 
     static var general: String { s("general") }
+    static var behavior: String { s("behavior") }
     static var appearance: String { s("appearance") }
+    static var update: String { s("update") }
     static var about: String { s("about") }
 
     // MARK: - General Tab
@@ -72,6 +74,26 @@ struct L10n {
     static var quit: String { s("quit") }
     static var minimized: String { s("minimized") }
 
+    // MARK: - Update Tab
+
+    static var autoUpdateToggle: String { s("autoUpdate_toggle") }
+    static var updateInterval: String { s("updateInterval") }
+    static var daily: String { s("daily") }
+    static var weekly: String { s("weekly") }
+    static var manual: String { s("manual") }
+    static var lastChecked: String { s("lastChecked") }
+    static var never: String { s("never") }
+    static var checkNow: String { s("checkNow") }
+    static var releaseNotes: String { s("releaseNotes") }
+    static var newVersionAvailable: String { s("newVersionAvailable") }
+    static var currentVersion: String { s("currentVersion") }
+    static var updateNow: String { s("updateNow") }
+    static var upgrading: String { s("upgrading") }
+    static var upgradeComplete: String { s("upgradeComplete") }
+    static var upgradeFailed: String { s("upgradeFailed") }
+    static var restart: String { s("restart") }
+    static var retry: String { s("retry") }
+
     // MARK: - Lookup
 
     private static func s(_ key: String) -> String {
@@ -89,7 +111,9 @@ struct L10n {
         "quitDockPeek": "Quit DockPeek",
 
         "general": "General",
+        "behavior": "Behavior",
         "appearance": "Appearance",
+        "update": "Update",
         "about": "About",
 
         "enableDockPeek": "Enable DockPeek",
@@ -127,6 +151,24 @@ struct L10n {
         "brewHint": "Homebrew: brew update && brew upgrade --cask dockpeek",
         "upToDate": "Up to Date",
         "upToDateMessage": "You're running the latest version of DockPeek.",
+
+        "autoUpdate_toggle": "Check for updates automatically",
+        "updateInterval": "Check interval",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "manual": "Manual",
+        "lastChecked": "Last checked",
+        "never": "Never",
+        "checkNow": "Check Now",
+        "releaseNotes": "Release Notes",
+        "newVersionAvailable": "New version available: %@",
+        "currentVersion": "Current version",
+        "updateNow": "Update Now",
+        "upgrading": "Updating via Homebrew...",
+        "upgradeComplete": "Update complete!",
+        "upgradeFailed": "Update failed",
+        "restart": "Restart",
+        "retry": "Retry",
     ]
 
     // MARK: - Korean
@@ -137,7 +179,9 @@ struct L10n {
         "quitDockPeek": "DockPeek 종료",
 
         "general": "일반",
+        "behavior": "동작",
         "appearance": "모양",
+        "update": "업데이트",
         "about": "정보",
 
         "enableDockPeek": "DockPeek 활성화",
@@ -175,5 +219,23 @@ struct L10n {
         "brewHint": "Homebrew: brew update && brew upgrade --cask dockpeek",
         "upToDate": "최신 버전",
         "upToDateMessage": "현재 최신 버전의 DockPeek을 사용 중입니다.",
+
+        "autoUpdate_toggle": "자동으로 업데이트 확인",
+        "updateInterval": "확인 주기",
+        "daily": "매일",
+        "weekly": "매주",
+        "manual": "수동",
+        "lastChecked": "마지막 확인",
+        "never": "확인한 적 없음",
+        "checkNow": "지금 확인",
+        "releaseNotes": "릴리스 노트",
+        "newVersionAvailable": "새 버전 사용 가능: %@",
+        "currentVersion": "현재 버전",
+        "updateNow": "지금 업데이트",
+        "upgrading": "Homebrew로 업데이트 중...",
+        "upgradeComplete": "업데이트 완료!",
+        "upgradeFailed": "업데이트 실패",
+        "restart": "재시작",
+        "retry": "재시도",
     ]
 }

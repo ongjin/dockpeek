@@ -13,7 +13,12 @@ final class PreviewPanel: NSPanel {
     let navState = PreviewNavState()
     private var storedWindows: [WindowInfo] = []
     private var storedOnSelect: ((WindowInfo) -> Void)?
+    private var storedOnClose: ((WindowInfo) -> Void)?
     private var storedOnSnap: ((WindowInfo, SnapPosition) -> Void)?
+    private var storedOnDismiss: (() -> Void)?
+    private var storedOnHoverWindow: ((WindowInfo?) -> Void)?
+    private var storedThumbnailSize: CGFloat = 200
+    private var storedShowTitles = true
     private var dismissGeneration = 0
 
     init() {
@@ -53,7 +58,12 @@ final class PreviewPanel: NSPanel {
         dismissGeneration &+= 1  // Invalidate any pending deferred cleanup
         storedWindows = windows
         storedOnSelect = onSelect
+        storedOnClose = onClose
         storedOnSnap = onSnap
+        storedOnDismiss = onDismiss
+        storedOnHoverWindow = onHoverWindow
+        storedThumbnailSize = thumbnailSize
+        storedShowTitles = showTitles
         navState.reset()
 
         let content = PreviewContentView(
@@ -93,6 +103,31 @@ final class PreviewPanel: NSPanel {
         setupDismissMonitors(onDismiss: onDismiss)
     }
 
+    /// Update thumbnails for windows already being displayed (e.g. after background generation)
+    func updateThumbnails(_ windows: [WindowInfo]) {
+        guard isVisible,
+              let onSelect = storedOnSelect,
+              let onClose = storedOnClose,
+              let onSnap = storedOnSnap,
+              let onDismiss = storedOnDismiss,
+              let onHoverWindow = storedOnHoverWindow else { return }
+        storedWindows = windows
+        let content = PreviewContentView(
+            windows: windows,
+            thumbnailSize: storedThumbnailSize,
+            showTitles: storedShowTitles,
+            onSelect: onSelect,
+            onClose: onClose,
+            onSnap: onSnap,
+            onDismiss: onDismiss,
+            onHoverWindow: onHoverWindow,
+            navState: navState
+        )
+        if let hosting = contentView as? NSHostingView<AnyView> {
+            hosting.rootView = AnyView(content)
+        }
+    }
+
     // MARK: - Dismiss
 
     func dismissPanel(animated: Bool = true) {
@@ -108,10 +143,7 @@ final class PreviewPanel: NSPanel {
                 guard self.dismissGeneration == gen else { return }
                 self.orderOut(nil)
                 self.alphaValue = 1
-                self.storedWindows = []
-                self.storedOnSelect = nil
-                self.storedOnSnap = nil
-                self.contentView = nil
+                self.clearStoredState()
             })
         } else {
             orderOut(nil)
@@ -119,12 +151,19 @@ final class PreviewPanel: NSPanel {
             // Skip if showPreview was called in between (generation changed).
             DispatchQueue.main.async {
                 guard self.dismissGeneration == gen else { return }
-                self.storedWindows = []
-                self.storedOnSelect = nil
-                self.storedOnSnap = nil
-                self.contentView = nil
+                self.clearStoredState()
             }
         }
+    }
+
+    private func clearStoredState() {
+        storedWindows = []
+        storedOnSelect = nil
+        storedOnClose = nil
+        storedOnSnap = nil
+        storedOnDismiss = nil
+        storedOnHoverWindow = nil
+        contentView = nil
     }
 
     // MARK: - Positioning

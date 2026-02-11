@@ -1,5 +1,4 @@
 import Cocoa
-import CoreGraphics
 
 protocol EventTapManagerDelegate: AnyObject {
     /// Return true to suppress the event (prevent Dock from handling it).
@@ -10,6 +9,11 @@ final class EventTapManager {
     weak var delegate: EventTapManagerDelegate?
 
     private(set) var isActive = false
+
+    deinit {
+        stop()
+    }
+
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var permissionWatchdog: DispatchSourceTimer?

@@ -1,5 +1,4 @@
 import AppKit
-import CoreGraphics
 
 /// Shows a translucent preview overlay at a window's actual screen position,
 /// displaying the real window content so the user can identify it before clicking.
