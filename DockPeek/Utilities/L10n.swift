@@ -55,6 +55,10 @@ struct L10n {
     static var accessibilityGranted: String { s("accessibilityGranted") }
     static var accessibilityRequired: String { s("accessibilityRequired") }
     static var grantPermission: String { s("grantPermission") }
+    static var screenRecordingGranted: String { s("screenRecordingGranted") }
+    static var screenRecordingRequired: String { s("screenRecordingRequired") }
+    static var copyDiagnostics: String { s("copyDiagnostics") }
+    static var diagnosticsCopied: String { s("diagnosticsCopied") }
 
     // MARK: - Appearance Tab
 
@@ -126,6 +130,10 @@ struct L10n {
         "accessibilityGranted": "Accessibility: Granted",
         "accessibilityRequired": "Accessibility: Required",
         "grantPermission": "Grant",
+        "screenRecordingGranted": "Screen Recording: Granted",
+        "screenRecordingRequired": "Screen Recording: Required",
+        "copyDiagnostics": "Copy Diagnostics",
+        "diagnosticsCopied": "Copied!",
 
         "thumbnailSize": "Thumbnail size",
         "showWindowTitles": "Show window titles",
@@ -194,6 +202,10 @@ struct L10n {
         "accessibilityGranted": "손쉬운 사용: 허용됨",
         "accessibilityRequired": "손쉬운 사용: 필요",
         "grantPermission": "허용",
+        "screenRecordingGranted": "화면 기록: 허용됨",
+        "screenRecordingRequired": "화면 기록: 필요",
+        "copyDiagnostics": "진단 정보 복사",
+        "diagnosticsCopied": "복사됨!",
 
         "thumbnailSize": "미리보기 크기",
         "showWindowTitles": "창 제목 표시",

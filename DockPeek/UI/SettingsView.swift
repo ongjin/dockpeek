@@ -351,20 +351,54 @@ struct SettingsView: View {
 
     // MARK: - Shared Components
 
+    @State private var screenRecordingOK = DiagnosticChecker.isScreenRecordingEffective
+    @State private var diagnosticsCopied = false
+
     private var permissionStatus: some View {
-        HStack {
+        VStack(alignment: .leading, spacing: 8) {
             Text(L10n.permissions)
                 .font(.caption).foregroundColor(.secondary)
-            Spacer()
-            Circle()
-                .fill(AccessibilityManager.shared.isAccessibilityGranted ? Color.green : Color.red)
-                .frame(width: 8, height: 8)
-            Text(AccessibilityManager.shared.isAccessibilityGranted
-                 ? L10n.accessibilityGranted : L10n.accessibilityRequired)
-                .font(.caption).foregroundColor(.secondary)
-            if !AccessibilityManager.shared.isAccessibilityGranted {
-                Button(L10n.grantPermission) { AccessibilityManager.shared.openAccessibilitySettings() }
-                    .font(.caption)
+
+            // Accessibility
+            HStack {
+                Circle()
+                    .fill(AccessibilityManager.shared.isAccessibilityGranted ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(AccessibilityManager.shared.isAccessibilityGranted
+                     ? L10n.accessibilityGranted : L10n.accessibilityRequired)
+                    .font(.caption).foregroundColor(.secondary)
+                if !AccessibilityManager.shared.isAccessibilityGranted {
+                    Button(L10n.grantPermission) { AccessibilityManager.shared.openAccessibilitySettings() }
+                        .font(.caption)
+                }
+            }
+
+            // Screen Recording
+            HStack {
+                Circle()
+                    .fill(screenRecordingOK ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(screenRecordingOK
+                     ? L10n.screenRecordingGranted : L10n.screenRecordingRequired)
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            .onAppear { screenRecordingOK = DiagnosticChecker.isScreenRecordingEffective }
+
+            // Diagnostics
+            HStack {
+                Button(action: {
+                    let report = DiagnosticChecker.run()
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(report.text, forType: .string)
+                    diagnosticsCopied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { diagnosticsCopied = false }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc")
+                        Text(diagnosticsCopied ? L10n.diagnosticsCopied : L10n.copyDiagnostics)
+                    }
+                }
+                .font(.caption)
             }
         }
     }
