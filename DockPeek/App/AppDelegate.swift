@@ -42,6 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var lastPollMouseLocation: CGPoint?
     private var lastPollInDock = false
 
+    // Cached Dock settings (auto-hide, orientation) — updated in updateCachedDockRect()
+    private var isDockAutoHide = false
+    private var dockOrientation = "bottom"
+
     // MARK: - Lifecycle
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -341,6 +345,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         guard let primary = NSScreen.screens.first else { cachedDockRect = .zero; return }
         let pH = primary.frame.height
 
+        // Read Dock settings
+        let dockDefaults = UserDefaults(suiteName: "com.apple.dock")
+        isDockAutoHide = dockDefaults?.bool(forKey: "autohide") ?? false
+        dockOrientation = dockDefaults?.string(forKey: "orientation") ?? "bottom"
+
         var rect = CGRect.zero
         for screen in NSScreen.screens {
             let full = screen.frame
@@ -361,12 +370,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 dockZone = CGRect(x: vis.maxX, y: cgTop, width: rightGap, height: full.height)
             }
 
+            // Auto-hide Dock: no visible gap, create detection zone at screen edge
+            if dockZone == .zero, isDockAutoHide {
+                let dockSize: CGFloat = 100
+                switch dockOrientation {
+                case "left":
+                    let cgTop = pH - full.maxY
+                    dockZone = CGRect(x: full.minX, y: cgTop, width: dockSize, height: full.height)
+                case "right":
+                    let cgTop = pH - full.maxY
+                    dockZone = CGRect(x: full.maxX - dockSize, y: cgTop, width: dockSize, height: full.height)
+                default: // "bottom"
+                    dockZone = CGRect(x: full.minX, y: pH - full.minY - dockSize, width: full.width, height: dockSize)
+                }
+            }
+
             if dockZone != .zero {
                 rect = rect == .zero ? dockZone : rect.union(dockZone)
             }
         }
         cachedDockRect = rect
-        dpLog("Cached dock rect (CG): \(cachedDockRect)")
+        dpLog("Cached dock rect (CG): \(cachedDockRect) autoHide=\(isDockAutoHide) orientation=\(dockOrientation)")
     }
 
     private func setupScreenChangeObserver() {
@@ -695,6 +719,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             if bottomGap > 30, cocoaY < vis.minY { return true }
             if leftGap > 30, point.x < vis.minX { return true }
             if rightGap > 30, point.x > vis.maxX { return true }
+
+            // Auto-hide Dock: check if point is near screen edge
+            if isDockAutoHide {
+                let dockSize: CGFloat = 100
+                switch dockOrientation {
+                case "left":
+                    if point.x < full.minX + dockSize { return true }
+                case "right":
+                    if point.x > full.maxX - dockSize { return true }
+                default: // "bottom"
+                    if cocoaY < full.minY + dockSize { return true }
+                }
+            }
         }
         return false
     }

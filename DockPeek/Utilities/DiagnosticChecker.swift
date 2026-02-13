@@ -30,8 +30,14 @@ enum DiagnosticChecker {
         let tapOK = testEventTapCreation()
         lines.append("Event Tap: \(tapOK ? "OK" : "FAILED")")
 
+        // Dock settings
+        let dockDefaults = UserDefaults(suiteName: "com.apple.dock")
+        let autoHide = dockDefaults?.bool(forKey: "autohide") ?? false
+        let orientation = dockDefaults?.string(forKey: "orientation") ?? "bottom"
+        lines.append("Dock: orientation=\(orientation) autohide=\(autoHide)")
+
         // Dock area detection
-        let dockRect = detectDockRect()
+        let dockRect = detectDockRect(autoHide: autoHide, orientation: orientation)
         if dockRect != .zero {
             lines.append("Dock Area: \(Int(dockRect.width))x\(Int(dockRect.height)) at (\(Int(dockRect.origin.x)),\(Int(dockRect.origin.y)))")
         } else {
@@ -118,7 +124,7 @@ enum DiagnosticChecker {
         return true
     }
 
-    private static func detectDockRect() -> CGRect {
+    private static func detectDockRect(autoHide: Bool, orientation: String) -> CGRect {
         guard let primary = NSScreen.screens.first else { return .zero }
         let pH = primary.frame.height
         var rect = CGRect.zero
@@ -139,6 +145,20 @@ enum DiagnosticChecker {
             } else if rightGap > 30 {
                 let cgTop = pH - full.maxY
                 dockZone = CGRect(x: vis.maxX, y: cgTop, width: rightGap, height: full.height)
+            }
+
+            if dockZone == .zero, autoHide {
+                let dockSize: CGFloat = 100
+                switch orientation {
+                case "left":
+                    let cgTop = pH - full.maxY
+                    dockZone = CGRect(x: full.minX, y: cgTop, width: dockSize, height: full.height)
+                case "right":
+                    let cgTop = pH - full.maxY
+                    dockZone = CGRect(x: full.maxX - dockSize, y: cgTop, width: dockSize, height: full.height)
+                default:
+                    dockZone = CGRect(x: full.minX, y: pH - full.minY - dockSize, width: full.width, height: dockSize)
+                }
             }
 
             if dockZone != .zero {
