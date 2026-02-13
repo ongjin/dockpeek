@@ -1,7 +1,7 @@
 SWIFT_FILES := $(shell find DockPeek -name '*.swift' -type f)
 APP_NAME    := DockPeek
 BUNDLE_ID   := com.dockpeek.app
-VERSION     := 1.5.5
+VERSION     := 1.5.6
 TARGET      := arm64-apple-macos14.0
 SWIFT_FLAGS := -swift-version 5 -target $(TARGET) -parse-as-library \
                -framework AppKit -framework SwiftUI \
