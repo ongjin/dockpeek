@@ -129,8 +129,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 
     @objc private func openAbout() {
+        NSApp.setActivationPolicy(.regular)
         NSApp.orderFrontStandardAboutPanel(nil)
         NSApp.activate()
+        // Restore accessory mode when about panel closes (check after delay)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.restoreAccessoryPolicyIfNeeded()
+        }
     }
 
     // MARK: - Update Check
@@ -166,7 +171,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     @objc func openSettings() {
         if let window = settingsWindow, window.isVisible {
+            NSApp.setActivationPolicy(.regular)
             window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
             NSApp.activate()
             return
         }
@@ -189,6 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         NSApp.activate()
         settingsWindow = window
     }
@@ -209,8 +217,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
-        // Hide from Dock when settings window closes
-        NSApp.setActivationPolicy(.accessory)
+        // Delay to allow any other windows to be checked
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreAccessoryPolicyIfNeeded()
+        }
+    }
+
+    /// Restore accessory mode only when no app windows are visible.
+    private func restoreAccessoryPolicyIfNeeded() {
+        let hasVisibleWindow = settingsWindow?.isVisible == true
+        if !hasVisibleWindow {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     // MARK: - Onboarding

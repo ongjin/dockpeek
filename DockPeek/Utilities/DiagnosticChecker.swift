@@ -100,11 +100,11 @@ enum DiagnosticChecker {
         }
 
         if finderWindowCount > 0 && hasName {
-            return "OK (\(finderWindowCount) Finder windows)"
+            return "OK (\(finderWindowCount) Finder windows, names visible)"
         } else if finderWindowCount > 0 {
-            return "PARTIAL (windows visible but names hidden — \(finderWindowCount) Finder windows)"
+            return "OK (\(finderWindowCount) Finder windows, names restricted — restart app to fully apply)"
         } else {
-            return "NOT EFFECTIVE (0 Finder windows visible)"
+            return "NOT GRANTED (0 Finder windows visible)"
         }
     }
 
