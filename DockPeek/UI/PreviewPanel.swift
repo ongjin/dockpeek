@@ -128,6 +128,46 @@ final class PreviewPanel: NSPanel {
         }
     }
 
+    /// Remove a single window card from the visible panel without re-fetching
+    /// the window list or regenerating thumbnails. If fewer than 2 windows
+    /// remain, the panel is dismissed.
+    func removeWindow(id: CGWindowID) {
+        guard isVisible,
+              let onSelect = storedOnSelect,
+              let onClose = storedOnClose,
+              let onSnap = storedOnSnap,
+              let onDismiss = storedOnDismiss,
+              let onHoverWindow = storedOnHoverWindow else { return }
+
+        let filtered = storedWindows.filter { $0.id != id }
+        if filtered.count < 2 {
+            dismissPanel()
+            return
+        }
+
+        storedWindows = filtered
+
+        // Clamp the keyboard selection so we never point past the end
+        if navState.selectedIndex >= filtered.count {
+            navState.selectedIndex = filtered.count - 1
+        }
+
+        let content = PreviewContentView(
+            windows: filtered,
+            thumbnailSize: storedThumbnailSize,
+            showTitles: storedShowTitles,
+            onSelect: onSelect,
+            onClose: onClose,
+            onSnap: onSnap,
+            onDismiss: onDismiss,
+            onHoverWindow: onHoverWindow,
+            navState: navState
+        )
+        if let hosting = contentView as? NSHostingView<AnyView> {
+            hosting.rootView = AnyView(content)
+        }
+    }
+
     // MARK: - Dismiss
 
     func dismissPanel(animated: Bool = true) {

@@ -908,17 +908,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 self?.windowManager.activateWindow(windowID: win.id, pid: win.ownerPID)
             },
             onClose: { [weak self] win in
-                self?.highlightOverlay.hide()
-                self?.windowManager.closeWindow(windowID: win.id, pid: win.ownerPID)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    guard let self else { return }
-                    let remaining = self.windowManager.windowsForApp(pid: win.ownerPID)
-                    if remaining.count < 2 {
-                        self.previewPanel.dismissPanel()
-                    } else {
-                        self.showPreviewForWindows(remaining, at: point)
-                    }
+                guard let self else { return }
+                self.highlightOverlay.hide()
+                // Immediately drop the card from the panel; no 300ms wait,
+                // no re-render, no thumbnail regeneration. If count drops
+                // below 2 the panel handles its own dismissal.
+                self.previewPanel.removeWindow(id: win.id)
+                if !self.previewPanel.isVisible {
+                    self.previewIsVisible = false
                 }
+                // Fire the AX close. closeWindow invalidates its caches
+                // so any follow-up query reflects the close.
+                self.windowManager.closeWindow(windowID: win.id, pid: win.ownerPID)
             },
             onSnap: { [weak self] win, position in
                 self?.highlightOverlay.hide()
