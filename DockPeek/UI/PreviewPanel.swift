@@ -147,10 +147,10 @@ final class PreviewPanel: NSPanel {
 
         storedWindows = filtered
 
-        // Clamp the keyboard selection so we never point past the end
-        if navState.selectedIndex >= filtered.count {
-            navState.selectedIndex = filtered.count - 1
-        }
+        // Reset keyboard selection — the index mapping changed after removal,
+        // and the visible keySelected highlight would otherwise point at the
+        // wrong card until the user re-navigates.
+        navState.selectedIndex = -1
 
         let content = PreviewContentView(
             windows: filtered,
