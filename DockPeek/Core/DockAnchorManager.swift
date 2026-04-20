@@ -55,6 +55,7 @@ final class DockAnchorManager {
     }
 
     func start() {
+        guard eventTap == nil else { return }
         guard AXIsProcessTrusted() else {
             dpLog("DockAnchor: accessibility not granted, skipping")
             return
