@@ -18,6 +18,7 @@ Pick the exact window you want — no more cycling through them all.
 - **Settings GUI** — Proper settings window with tabs (General, Appearance, About), accessible via Cmd+, or menu bar
 - **Korean / English** — In-app language switching between English and 한국어
 - **Force Primary Display** — New app windows always open on your primary monitor
+- **Anchor Dock to Primary Display** — Lock the Dock to your main monitor so it stops following the cursor to other screens (no Accessibility permission needed for this one)
 - **Launch at Login** — Start DockPeek automatically when you log in
 - **Safe Permission Handling** — Revoking accessibility permission won't freeze your system
 - **Configurable** — Adjust thumbnail size, toggle window titles, exclude specific apps
@@ -76,6 +77,7 @@ Click the menubar icon → **Settings...** (or press **Cmd+,**) to open the sett
 - **Enable DockPeek** — Toggle the feature on/off
 - **Launch at login** — Start DockPeek automatically on login
 - **Force new windows to primary display** — New app windows always open on your main monitor
+- **Anchor dock to primary display** — Pin the Dock to the main monitor (restarts the Dock once when toggled)
 - **Language** — Switch between English and 한국어 (instant, no restart needed)
 - **Permission status** — See whether Accessibility permission is granted
 
@@ -99,6 +101,7 @@ Click the menubar icon → **Settings...** (or press **Cmd+,**) to open the sett
 5. A floating preview panel is displayed with keyboard navigation and snap controls
 6. Selecting a window activates it via the SkyLight private API (same approach as AltTab)
 7. A background watchdog monitors accessibility permission to prevent system freezes if revoked
+8. "Anchor dock to primary display" toggles the undocumented `com.apple.dock` key `allow-display-switching` (which gates the Dock's internal display-reassignment path) and restarts the Dock. No event taps, no cursor interference, no menu-bar/full-screen side effects.
 
 ## Project Structure
 
