@@ -33,6 +33,30 @@ final class WindowManager {
     /// Whether preview panel is currently visible — set by AppDelegate to extend cache TTL
     var isPreviewVisible = false
 
+    init() {
+        loadWindowOrder()
+    }
+
+    private func loadWindowOrder() {
+        guard let raw = UserDefaults.standard.dictionary(forKey: windowOrderDefaultsKey) else { return }
+        var result: [String: [CGWindowID]] = [:]
+        for (bundle, value) in raw {
+            if let nums = value as? [NSNumber] {
+                result[bundle] = nums.map { CGWindowID($0.uint32Value) }
+            }
+        }
+        windowOrderByBundle = result
+        dpLog("Loaded window order for \(result.count) bundle(s)")
+    }
+
+    private func saveWindowOrder() {
+        var serializable: [String: [NSNumber]] = [:]
+        for (bundle, ids) in windowOrderByBundle {
+            serializable[bundle] = ids.map { NSNumber(value: UInt32($0)) }
+        }
+        UserDefaults.standard.set(serializable, forKey: windowOrderDefaultsKey)
+    }
+
     /// CGWindowListCopyWindowInfo result cache: pid → (result, timestamp)
     private var windowListCache: [pid_t: ([[String: Any]], Date)] = [:]
     private let windowListCacheTTL: TimeInterval = 0.5
@@ -40,6 +64,12 @@ final class WindowManager {
     /// AX window IDs cache: pid → (ids, timestamp)
     private var axWindowIDsCache: [pid_t: (Set<CGWindowID>, Date)] = [:]
     private let axWindowIDsCacheTTL: TimeInterval = 1.0
+
+    /// Per-app stable window order. Keyed by bundleID so restarts of the target
+    /// app (which generate fresh CGWindowIDs) naturally reset the order.
+    /// Persisted to UserDefaults; see `loadWindowOrder` / `saveWindowOrder`.
+    private var windowOrderByBundle: [String: [CGWindowID]] = [:]
+    private let windowOrderDefaultsKey = "windowOrderByBundle"
 
     // MARK: - Window Enumeration
 
@@ -106,6 +136,27 @@ final class WindowManager {
             if windows.count != before {
                 dpLog("AX filter: \(before) → \(windows.count) windows for PID \(pid)")
             }
+        }
+
+        // Apply stable per-bundle ordering. New windows go to the end; existing
+        // windows keep their prior position; closed windows drop out.
+        if let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier {
+            let byID = Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
+            let currentIDs = Set(byID.keys)
+            let stored = windowOrderByBundle[bundleID] ?? []
+
+            var orderedIDs: [CGWindowID] = stored.filter { currentIDs.contains($0) }
+            let already = Set(orderedIDs)
+            for w in windows where !already.contains(w.id) {
+                orderedIDs.append(w.id)
+            }
+
+            if orderedIDs != stored {
+                windowOrderByBundle[bundleID] = orderedIDs
+                saveWindowOrder()
+            }
+
+            windows = orderedIDs.compactMap { byID[$0] }
         }
 
         dpLog("Found \(windows.count) windows for PID \(pid) (includeMinimized=\(includeMinimized))")
