@@ -272,7 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     /// `com.apple.dock` preferences, not event taps.
     func applyDockAnchorSetting() {
         if appState.anchorDockToPrimary {
-            dockAnchorManager.start()
+            dockAnchorManager.start(orientation: appState.dockAnchorOrientation)
         } else {
             dockAnchorManager.stop()
         }

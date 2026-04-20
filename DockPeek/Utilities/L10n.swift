@@ -38,8 +38,16 @@ struct L10n {
     // MARK: - Tabs
 
     static var general: String { s("general") }
+    static var dock: String { s("dock") }
     static var update: String { s("update") }
     static var about: String { s("about") }
+
+    // MARK: - Dock Tab
+
+    static var dockOrientation: String { s("dockOrientation") }
+    static var dockOrientationBottom: String { s("dockOrientationBottom") }
+    static var dockOrientationLeft: String { s("dockOrientationLeft") }
+    static var dockOrientationRight: String { s("dockOrientationRight") }
 
     // MARK: - General Tab
 
@@ -105,8 +113,14 @@ struct L10n {
         "quitDockPeek": "Quit DockPeek",
 
         "general": "General",
+        "dock": "Dock",
         "update": "Update",
         "about": "About",
+
+        "dockOrientation": "Dock position",
+        "dockOrientationBottom": "Bottom",
+        "dockOrientationLeft": "Left",
+        "dockOrientationRight": "Right",
 
         "launchAtLogin": "Launch at login",
         "anchorDockToPrimary": "Anchor dock to primary display",
@@ -169,8 +183,14 @@ struct L10n {
         "quitDockPeek": "DockPeek 종료",
 
         "general": "일반",
+        "dock": "Dock",
         "update": "업데이트",
         "about": "정보",
+
+        "dockOrientation": "Dock 위치",
+        "dockOrientationBottom": "하단",
+        "dockOrientationLeft": "좌측",
+        "dockOrientationRight": "우측",
 
         "launchAtLogin": "로그인 시 자동 실행",
         "anchorDockToPrimary": "Dock을 메인 디스플레이에 고정",

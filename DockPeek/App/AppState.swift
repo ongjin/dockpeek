@@ -6,6 +6,7 @@ final class AppState: ObservableObject {
     @AppStorage("thumbnailSize") var thumbnailSize: Double = 200
     @AppStorage("launchAtLogin") var launchAtLogin = false
     @AppStorage("anchorDockToPrimary") var anchorDockToPrimary = false
+    @AppStorage("dockAnchorOrientation") var dockAnchorOrientation: String = "bottom"
     @AppStorage("excludedBundleIDs") var excludedBundleIDsRaw = "" {
         didSet { cachedExcludedBundleIDs = Self.parseExcludedIDs(excludedBundleIDsRaw) }
     }

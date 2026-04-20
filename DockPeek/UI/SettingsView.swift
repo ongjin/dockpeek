@@ -10,6 +10,8 @@ struct SettingsView: View {
         TabView {
             generalTab
                 .tabItem { Label(L10n.general, systemImage: "gear") }
+            dockTab
+                .tabItem { Label(L10n.dock, systemImage: "dock.rectangle") }
             updateTab
                 .tabItem {
                     if updateChecker.updateAvailable {
@@ -41,11 +43,6 @@ struct SettingsView: View {
                     } catch {
                         dpLog("Login item registration failed: \(error)")
                     }
-                }
-
-            Toggle(L10n.anchorDockToPrimary, isOn: $appState.anchorDockToPrimary)
-                .onChange(of: appState.anchorDockToPrimary) { _, _ in
-                    (NSApp.delegate as? AppDelegate)?.applyDockAnchorSetting()
                 }
 
             Divider()
@@ -88,6 +85,36 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(.top, 8)
+    }
+
+    // MARK: - Dock
+
+    private var dockTab: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Toggle(L10n.anchorDockToPrimary, isOn: $appState.anchorDockToPrimary)
+                .onChange(of: appState.anchorDockToPrimary) { _, _ in applyAnchor() }
+
+            HStack {
+                Text(L10n.dockOrientation)
+                Spacer()
+                Picker("", selection: $appState.dockAnchorOrientation) {
+                    Text(L10n.dockOrientationBottom).tag("bottom")
+                    Text(L10n.dockOrientationLeft).tag("left")
+                    Text(L10n.dockOrientationRight).tag("right")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 240)
+                .disabled(!appState.anchorDockToPrimary)
+                .onChange(of: appState.dockAnchorOrientation) { _, _ in applyAnchor() }
+            }
+
+            Spacer()
+        }
+        .padding(.top, 8)
+    }
+
+    private func applyAnchor() {
+        (NSApp.delegate as? AppDelegate)?.applyDockAnchorSetting()
     }
 
     // MARK: - Update
