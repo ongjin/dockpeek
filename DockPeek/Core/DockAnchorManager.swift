@@ -6,6 +6,46 @@ final class DockAnchorManager {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var dockPID: pid_t = 0
+    private var triggerZones: [CGRect] = []
+    private var dockOrientation: String = "bottom"  // "bottom" | "left" | "right"
+
+    private func recomputeTriggerZones() {
+        dockOrientation = UserDefaults(suiteName: "com.apple.dock")?
+            .string(forKey: "orientation") ?? "bottom"
+
+        guard let primary = NSScreen.screens.first else {
+            triggerZones = []
+            return
+        }
+        let primaryH = primary.frame.height
+
+        var zones: [CGRect] = []
+        for screen in NSScreen.screens where screen != primary {
+            let f = screen.frame  // Cocoa (bottom-left origin)
+            // Convert to CG (top-left origin) using primary height
+            let cgMinX = f.minX
+            let cgMinY = primaryH - f.maxY
+            let cgMaxX = f.maxX
+            let cgMaxY = primaryH - f.minY
+
+            let thickness: CGFloat = 10
+            let zone: CGRect
+            switch dockOrientation {
+            case "left":
+                zone = CGRect(x: cgMinX, y: cgMinY,
+                              width: thickness, height: cgMaxY - cgMinY)
+            case "right":
+                zone = CGRect(x: cgMaxX - thickness, y: cgMinY,
+                              width: thickness, height: cgMaxY - cgMinY)
+            default: // "bottom"
+                zone = CGRect(x: cgMinX, y: cgMaxY - thickness,
+                              width: cgMaxX - cgMinX, height: thickness)
+            }
+            zones.append(zone)
+        }
+        triggerZones = zones
+        dpLog("DockAnchor: \(zones.count) trigger zone(s), orientation=\(dockOrientation)")
+    }
 
     deinit {
         stop()
@@ -21,6 +61,8 @@ final class DockAnchorManager {
             return
         }
         dockPID = pid
+
+        recomputeTriggerZones()
 
         let mask: CGEventMask = 1 << CGEventType.mouseMoved.rawValue
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
@@ -61,11 +103,12 @@ final class DockAnchorManager {
         dpLog("DockAnchor: stopped")
     }
 
-    // PoC: log-only. Does not drop events yet.
     private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .mouseMoved {
-            let loc = event.location
-            dpLog("DockAnchor PoC: mouseMoved at (\(Int(loc.x)), \(Int(loc.y)))")
+        guard type == .mouseMoved else { return Unmanaged.passUnretained(event) }
+        let loc = event.location
+        for zone in triggerZones where zone.contains(loc) {
+            // Drop this event — the Dock will not see it.
+            return nil
         }
         return Unmanaged.passUnretained(event)
     }
