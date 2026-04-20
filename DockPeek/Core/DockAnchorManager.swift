@@ -88,7 +88,7 @@ final class DockAnchorManager {
 
         eventTap = tap
         runLoopSource = source
-        dpLog("DockAnchor: PoC tap installed on Dock pid \(pid)")
+        dpLog("DockAnchor: tap installed on Dock pid \(pid)")
     }
 
     func stop() {
