@@ -7,6 +7,10 @@ final class DockAnchorManager {
     private var runLoopSource: CFRunLoopSource?
     private var dockPID: pid_t = 0
 
+    deinit {
+        stop()
+    }
+
     func start() {
         guard AXIsProcessTrusted() else {
             dpLog("DockAnchor: accessibility not granted, skipping")
