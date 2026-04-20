@@ -8,6 +8,9 @@ final class DockAnchorManager {
     private var dockPID: pid_t = 0
     private var triggerZones: [CGRect] = []
     private var dockOrientation: String = "bottom"  // "bottom" | "left" | "right"
+    private var dockTerminateObserver: NSObjectProtocol?
+    private var dockLaunchObserver: NSObjectProtocol?
+    private var screenChangeObserver: NSObjectProtocol?
 
     private func recomputeTriggerZones() {
         dockOrientation = UserDefaults(suiteName: "com.apple.dock")?
@@ -95,17 +98,15 @@ final class DockAnchorManager {
                 self?.warpDockToPrimary()
             }
         }
+
+        installObservers()
     }
 
     func stop() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
-        }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-            runLoopSource = nil
-        }
+        removeObservers()
+        tearDownTap()
+        triggerZones = []
+        dockPID = 0
         dpLog("DockAnchor: stopped")
     }
 
@@ -179,6 +180,101 @@ final class DockAnchorManager {
         CGWarpMouseCursorPosition(original)
 
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+    }
+
+    private func installObservers() {
+        let ws = NSWorkspace.shared.notificationCenter
+        dockTerminateObserver = ws.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier == "com.apple.dock" else { return }
+            self?.handleDockTerminated()
+        }
+
+        dockLaunchObserver = ws.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier == "com.apple.dock" else { return }
+            self?.handleDockLaunched(pid: app.processIdentifier)
+        }
+
+        screenChangeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleScreenChanged()
+        }
+    }
+
+    private func removeObservers() {
+        let ws = NSWorkspace.shared.notificationCenter
+        if let o = dockTerminateObserver { ws.removeObserver(o); dockTerminateObserver = nil }
+        if let o = dockLaunchObserver { ws.removeObserver(o); dockLaunchObserver = nil }
+        if let o = screenChangeObserver { NotificationCenter.default.removeObserver(o); screenChangeObserver = nil }
+    }
+
+    private func tearDownTap() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            eventTap = nil
+        }
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            runLoopSource = nil
+        }
+    }
+
+    private func handleDockTerminated() {
+        dpLog("DockAnchor: Dock terminated — tearing down tap")
+        tearDownTap()
+        dockPID = 0
+    }
+
+    private func handleDockLaunched(pid: pid_t) {
+        dpLog("DockAnchor: Dock relaunched pid=\(pid) — rebuilding tap")
+        tearDownTap()
+        dockPID = pid
+
+        let mask: CGEventMask = 1 << CGEventType.mouseMoved.rawValue
+        let userInfo = Unmanaged.passUnretained(self).toOpaque()
+
+        guard let tap = CGEvent.tapCreateForPid(
+            pid: pid,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: { (_, type, event, refcon) -> Unmanaged<CGEvent>? in
+                let manager = Unmanaged<DockAnchorManager>.fromOpaque(refcon!).takeUnretainedValue()
+                return manager.handleEvent(type: type, event: event)
+            },
+            userInfo: userInfo
+        ) else {
+            dpLog("DockAnchor: relaunch tap failed pid=\(pid)")
+            return
+        }
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        eventTap = tap
+        runLoopSource = source
+
+        // Give the relaunched Dock a moment to settle, then correct position if needed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            if self.isDockOnNonPrimary() { self.warpDockToPrimary() }
+        }
+    }
+
+    private func handleScreenChanged() {
+        dpLog("DockAnchor: screen parameters changed — recomputing zones")
+        recomputeTriggerZones()
+        if isDockOnNonPrimary() {
+            warpDockToPrimary()
+        }
     }
 
     private static func findDockPID() -> pid_t? {
