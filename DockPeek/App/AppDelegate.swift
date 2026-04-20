@@ -74,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         if AccessibilityManager.shared.isAccessibilityGranted {
             startEventTap()
             startHoverMonitor()
+            applyDockAnchorSetting()
             startPermissionMonitor()
         } else {
             showOnboarding()
@@ -86,9 +87,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 if available { self?.notifyUpdateAvailable() }
             }
         }
-
-        // TEMPORARY PoC — will be gated by a setting in Task 5
-        dockAnchorManager.start()
     }
 
     // MARK: - Status Item
@@ -254,6 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             if AccessibilityManager.shared.isAccessibilityGranted {
                 self.startEventTap()
                 self.startHoverMonitor()
+                self.applyDockAnchorSetting()
                 timer.invalidate()
                 self.accessibilityTimer = nil
                 self.startPermissionMonitor()
@@ -267,6 +266,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         eventTapManager.delegate = self
         eventTapManager.start()
         dpLog("Event tap delegate connected")
+    }
+
+    /// Start or stop the Dock anchor based on the current setting and
+    /// accessibility permission. Safe to call from anywhere, anytime.
+    func applyDockAnchorSetting() {
+        if appState.anchorDockToPrimary && AccessibilityManager.shared.isAccessibilityGranted {
+            dockAnchorManager.start()
+        } else {
+            dockAnchorManager.stop()
+        }
     }
 
     // MARK: - Hover Monitor
@@ -524,6 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 dpLog("Permission revoked — stopping event tap")
                 self.eventTapManager.stop()
                 self.stopHoverMonitor()
+                self.dockAnchorManager.stop()
                 timer.invalidate()
                 self.permissionMonitorTimer = nil
                 // Resume polling so we can restart when permission is re-granted
