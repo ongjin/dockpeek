@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private let windowManager = WindowManager()
     private let previewPanel = PreviewPanel()
     private let highlightOverlay = HighlightOverlay()
+    private let dockAnchorManager = DockAnchorManager()
 
     private let updateChecker = UpdateChecker.shared
     private var lastClickTime: Date = .distantPast
@@ -47,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     // MARK: - Lifecycle
 
     func applicationWillTerminate(_ notification: Notification) {
+        dockAnchorManager.stop()
         eventTapManager.stop()
         stopHoverMonitor()
         permissionMonitorTimer?.invalidate()
@@ -84,6 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 if available { self?.notifyUpdateAvailable() }
             }
         }
+
+        // TEMPORARY PoC — will be gated by a setting in Task 5
+        dockAnchorManager.start()
     }
 
     // MARK: - Status Item
