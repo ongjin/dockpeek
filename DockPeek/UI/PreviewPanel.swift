@@ -129,8 +129,9 @@ final class PreviewPanel: NSPanel {
     }
 
     /// Remove a single window card from the visible panel without re-fetching
-    /// the window list or regenerating thumbnails. If fewer than 2 windows
-    /// remain, the panel is dismissed.
+    /// the window list or regenerating thumbnails. The panel is dismissed
+    /// only when the last window is closed — a single remaining window stays
+    /// visible so the user can still inspect or activate it.
     func removeWindow(id: CGWindowID) {
         guard isVisible,
               let onSelect = storedOnSelect,
@@ -140,7 +141,7 @@ final class PreviewPanel: NSPanel {
               let onHoverWindow = storedOnHoverWindow else { return }
 
         let filtered = storedWindows.filter { $0.id != id }
-        if filtered.count < 2 {
+        if filtered.isEmpty {
             dismissPanel()
             return
         }
