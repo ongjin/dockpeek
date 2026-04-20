@@ -338,6 +338,11 @@ final class WindowManager {
         // Safe: AXCloseButtonAttribute returns an AXUIElement
         let closeButton = closeRef as! AXUIElement
         AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
+
+        // Invalidate caches so the next windowsForApp(pid:) sees the post-close state
+        windowListCache.removeValue(forKey: pid)
+        axWindowIDsCache.removeValue(forKey: pid)
+
         dpLog("Closed window \(windowID)")
     }
 
