@@ -48,7 +48,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     // MARK: - Lifecycle
 
     func applicationWillTerminate(_ notification: Notification) {
-        dockAnchorManager.stop()
         eventTapManager.stop()
         stopHoverMonitor()
         permissionMonitorTimer?.invalidate()
@@ -71,10 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         setupNewWindowObserver()
         setupScreenChangeObserver()
 
+        applyDockAnchorSetting()
+
         if AccessibilityManager.shared.isAccessibilityGranted {
             startEventTap()
             startHoverMonitor()
-            applyDockAnchorSetting()
             startPermissionMonitor()
         } else {
             showOnboarding()
@@ -252,7 +252,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             if AccessibilityManager.shared.isAccessibilityGranted {
                 self.startEventTap()
                 self.startHoverMonitor()
-                self.applyDockAnchorSetting()
                 timer.invalidate()
                 self.accessibilityTimer = nil
                 self.startPermissionMonitor()
@@ -268,10 +267,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         dpLog("Event tap delegate connected")
     }
 
-    /// Start or stop the Dock anchor based on the current setting and
-    /// accessibility permission. Safe to call from anywhere, anytime.
+    /// Start or stop the Dock anchor based on the current setting.
+    /// Independent of accessibility permission — anchoring works via
+    /// `com.apple.dock` preferences, not event taps.
     func applyDockAnchorSetting() {
-        if appState.anchorDockToPrimary && AccessibilityManager.shared.isAccessibilityGranted {
+        if appState.anchorDockToPrimary {
             dockAnchorManager.start()
         } else {
             dockAnchorManager.stop()
@@ -533,7 +533,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 dpLog("Permission revoked — stopping event tap")
                 self.eventTapManager.stop()
                 self.stopHoverMonitor()
-                self.dockAnchorManager.stop()
                 timer.invalidate()
                 self.permissionMonitorTimer = nil
                 // Resume polling so we can restart when permission is re-granted

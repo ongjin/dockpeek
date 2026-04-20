@@ -1,285 +1,49 @@
 // DockPeek/Core/DockAnchorManager.swift
-import AppKit
-import ApplicationServices
+import Foundation
 
+/// Anchors the macOS Dock to the primary display by toggling the
+/// undocumented `com.apple.dock` key `allow-display-switching`.
+///
+/// Setting the key to `false` disables the Dock's cursor-edge
+/// display-reassignment path (the `_mouseEnterHelper:location:
+/// allowSwitchingBetweenDisplays:` hook gated by `allowDockDisplaySwitching`
+/// on the Dock's `DockGlobals`). Unlike the `com.apple.spaces
+/// spans-displays` alternative, this key has no side effects on
+/// menu-bar behavior or full-screen apps.
+///
+/// The Dock reads this preference once at launch, so every change
+/// is followed by a `killall Dock` to force a reload.
 final class DockAnchorManager {
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
-    private var dockPID: pid_t = 0
-    private var triggerZones: [CGRect] = []
-    private var dockOrientation: String = "bottom"  // "bottom" | "left" | "right"
-    private var dockTerminateObserver: NSObjectProtocol?
-    private var dockLaunchObserver: NSObjectProtocol?
-    private var screenChangeObserver: NSObjectProtocol?
-
-    private func recomputeTriggerZones() {
-        dockOrientation = UserDefaults(suiteName: "com.apple.dock")?
-            .string(forKey: "orientation") ?? "bottom"
-
-        guard let primary = NSScreen.screens.first else {
-            triggerZones = []
-            return
-        }
-        let primaryH = primary.frame.height
-
-        var zones: [CGRect] = []
-        for screen in NSScreen.screens where screen != primary {
-            let f = screen.frame  // Cocoa (bottom-left origin)
-            // Convert to CG (top-left origin) using primary height
-            let cgMinX = f.minX
-            let cgMinY = primaryH - f.maxY
-            let cgMaxX = f.maxX
-            let cgMaxY = primaryH - f.minY
-
-            let thickness: CGFloat = 10
-            let zone: CGRect
-            switch dockOrientation {
-            case "left":
-                zone = CGRect(x: cgMinX, y: cgMinY,
-                              width: thickness, height: cgMaxY - cgMinY)
-            case "right":
-                zone = CGRect(x: cgMaxX - thickness, y: cgMinY,
-                              width: thickness, height: cgMaxY - cgMinY)
-            default: // "bottom"
-                zone = CGRect(x: cgMinX, y: cgMaxY - thickness,
-                              width: cgMaxX - cgMinX, height: thickness)
-            }
-            zones.append(zone)
-        }
-        triggerZones = zones
-        dpLog("DockAnchor: \(zones.count) trigger zone(s), orientation=\(dockOrientation)")
-    }
-
-    deinit {
-        stop()
-    }
+    private static let dockDomain = "com.apple.dock" as CFString
+    private static let key = "allow-display-switching" as CFString
 
     func start() {
-        guard eventTap == nil else { return }
-        guard AXIsProcessTrusted() else {
-            dpLog("DockAnchor: accessibility not granted, skipping")
-            return
-        }
-        guard let pid = Self.findDockPID() else {
-            dpLog("DockAnchor: Dock process not found")
-            return
-        }
-        dockPID = pid
-
-        recomputeTriggerZones()
-
-        let mask: CGEventMask = 1 << CGEventType.mouseMoved.rawValue
-        let userInfo = Unmanaged.passUnretained(self).toOpaque()
-
-        guard let tap = CGEvent.tapCreateForPid(
-            pid: pid,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: { (_, type, event, refcon) -> Unmanaged<CGEvent>? in
-                let manager = Unmanaged<DockAnchorManager>.fromOpaque(refcon!).takeUnretainedValue()
-                return manager.handleEvent(type: type, event: event)
-            },
-            userInfo: userInfo
-        ) else {
-            dpLog("DockAnchor: tapCreateForPid failed (pid=\(pid))")
-            return
-        }
-
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-
-        eventTap = tap
-        runLoopSource = source
-        dpLog("DockAnchor: tap installed on Dock pid \(pid)")
-
-        if isDockOnNonPrimary() {
-            DispatchQueue.main.async { [weak self] in
-                self?.warpDockToPrimary()
-            }
-        }
-
-        installObservers()
+        if currentValue() == false { return }
+        setValue(false)
+        restartDock()
+        dpLog("DockAnchor: pinned Dock to primary display")
     }
 
     func stop() {
-        removeObservers()
-        tearDownTap()
-        triggerZones = []
-        dockPID = 0
-        dpLog("DockAnchor: stopped")
+        if currentValue() == nil { return }
+        setValue(nil)
+        restartDock()
+        dpLog("DockAnchor: restored Dock to default behavior")
     }
 
-    private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        guard type == .mouseMoved else { return Unmanaged.passUnretained(event) }
-        let loc = event.location
-        for zone in triggerZones where zone.contains(loc) {
-            // Drop this event — the Dock will not see it.
-            return nil
-        }
-        return Unmanaged.passUnretained(event)
+    private func currentValue() -> Bool? {
+        CFPreferencesCopyAppValue(Self.key, Self.dockDomain) as? Bool
     }
 
-    /// True if Dock's first window lives on a non-primary screen.
-    private func isDockOnNonPrimary() -> Bool {
-        guard dockPID != 0 else { return false }
-        let axApp = AXUIElementCreateApplication(dockPID)
-
-        var windowsRef: AnyObject?
-        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let windows = windowsRef as? [AXUIElement],
-              let first = windows.first else { return false }
-
-        var posRef: AnyObject?
-        guard AXUIElementCopyAttributeValue(first, kAXPositionAttribute as CFString, &posRef) == .success,
-              let p = posRef else { return false }
-
-        var pos = CGPoint.zero
-        AXValueGetValue(p as! AXValue, .cgPoint, &pos)
-
-        guard let primary = NSScreen.screens.first else { return false }
-        let primaryH = primary.frame.height
-        let primaryCG = CGRect(
-            x: primary.frame.minX,
-            y: primaryH - primary.frame.maxY,
-            width: primary.frame.width,
-            height: primary.frame.height
-        )
-        return !primaryCG.contains(pos)
+    private func setValue(_ value: Bool?) {
+        CFPreferencesSetAppValue(Self.key, value as CFPropertyList?, Self.dockDomain)
+        CFPreferencesAppSynchronize(Self.dockDomain)
     }
 
-    /// One-time synthetic cursor warp to the primary's trigger point.
-    /// This is the ONLY situation in which we let the Dock move.
-    private func warpDockToPrimary() {
-        guard let primary = NSScreen.screens.first else { return }
-        let primaryH = primary.frame.height
-        let f = primary.frame
-
-        let target: CGPoint
-        switch dockOrientation {
-        case "left":
-            target = CGPoint(x: f.minX + 1, y: primaryH - f.midY)
-        case "right":
-            target = CGPoint(x: f.maxX - 1, y: primaryH - f.midY)
-        default: // "bottom"
-            target = CGPoint(x: f.midX, y: primaryH - f.minY - 1)
-        }
-
-        let original = CGEvent(source: nil)?.location ?? target
-        dpLog("DockAnchor: warping cursor to primary trigger \(target) (restore to \(original))")
-
-        // Briefly disable our tap so our synthetic events aren't filtered
-        if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
-
-        // Hold at the trigger point for a few frames so the Dock latches
-        for _ in 0..<6 {
-            CGWarpMouseCursorPosition(target)
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-        // Restore original position
-        CGWarpMouseCursorPosition(original)
-
-        if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-    }
-
-    private func installObservers() {
-        let ws = NSWorkspace.shared.notificationCenter
-        dockTerminateObserver = ws.addObserver(
-            forName: NSWorkspace.didTerminateApplicationNotification,
-            object: nil, queue: .main
-        ) { [weak self] note in
-            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  app.bundleIdentifier == "com.apple.dock" else { return }
-            self?.handleDockTerminated()
-        }
-
-        dockLaunchObserver = ws.addObserver(
-            forName: NSWorkspace.didLaunchApplicationNotification,
-            object: nil, queue: .main
-        ) { [weak self] note in
-            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  app.bundleIdentifier == "com.apple.dock" else { return }
-            self?.handleDockLaunched(pid: app.processIdentifier)
-        }
-
-        screenChangeObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.handleScreenChanged()
-        }
-    }
-
-    private func removeObservers() {
-        let ws = NSWorkspace.shared.notificationCenter
-        if let o = dockTerminateObserver { ws.removeObserver(o); dockTerminateObserver = nil }
-        if let o = dockLaunchObserver { ws.removeObserver(o); dockLaunchObserver = nil }
-        if let o = screenChangeObserver { NotificationCenter.default.removeObserver(o); screenChangeObserver = nil }
-    }
-
-    private func tearDownTap() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
-        }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-            runLoopSource = nil
-        }
-    }
-
-    private func handleDockTerminated() {
-        dpLog("DockAnchor: Dock terminated — tearing down tap")
-        tearDownTap()
-        dockPID = 0
-    }
-
-    private func handleDockLaunched(pid: pid_t) {
-        dpLog("DockAnchor: Dock relaunched pid=\(pid) — rebuilding tap")
-        tearDownTap()
-        dockPID = pid
-
-        let mask: CGEventMask = 1 << CGEventType.mouseMoved.rawValue
-        let userInfo = Unmanaged.passUnretained(self).toOpaque()
-
-        guard let tap = CGEvent.tapCreateForPid(
-            pid: pid,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: { (_, type, event, refcon) -> Unmanaged<CGEvent>? in
-                let manager = Unmanaged<DockAnchorManager>.fromOpaque(refcon!).takeUnretainedValue()
-                return manager.handleEvent(type: type, event: event)
-            },
-            userInfo: userInfo
-        ) else {
-            dpLog("DockAnchor: relaunch tap failed pid=\(pid)")
-            return
-        }
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-        eventTap = tap
-        runLoopSource = source
-
-        // Give the relaunched Dock a moment to settle, then correct position if needed
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self else { return }
-            if self.isDockOnNonPrimary() { self.warpDockToPrimary() }
-        }
-    }
-
-    private func handleScreenChanged() {
-        dpLog("DockAnchor: screen parameters changed — recomputing zones")
-        recomputeTriggerZones()
-        if isDockOnNonPrimary() {
-            warpDockToPrimary()
-        }
-    }
-
-    private static func findDockPID() -> pid_t? {
-        NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock")
-            .first?.processIdentifier
+    private func restartDock() {
+        let task = Process()
+        task.launchPath = "/usr/bin/killall"
+        task.arguments = ["Dock"]
+        try? task.run()
     }
 }
