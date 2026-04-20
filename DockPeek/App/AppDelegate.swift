@@ -402,10 +402,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             self, selector: #selector(screenDidChange),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(dockDidRelaunch(_:)),
+            name: NSWorkspace.didLaunchApplicationNotification, object: nil
+        )
     }
 
     @objc private func screenDidChange() {
         updateCachedDockRect()
+    }
+
+    /// Refresh cached Dock geometry when the Dock process respawns — its
+    /// orientation and autohide prefs are re-read from `com.apple.dock`
+    /// and the visible-frame layout may have changed.
+    @objc private func dockDidRelaunch(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.bundleIdentifier == "com.apple.dock" else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.updateCachedDockRect()
+        }
     }
 
     /// Called from the poll timer when mouse is near the dock or preview panel.
