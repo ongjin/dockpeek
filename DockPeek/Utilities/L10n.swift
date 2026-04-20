@@ -38,18 +38,12 @@ struct L10n {
     // MARK: - Tabs
 
     static var general: String { s("general") }
-    static var behavior: String { s("behavior") }
-    static var appearance: String { s("appearance") }
     static var update: String { s("update") }
     static var about: String { s("about") }
 
     // MARK: - General Tab
 
-    static var enableDockPeek: String { s("enableDockPeek") }
     static var launchAtLogin: String { s("launchAtLogin") }
-    static var forceNewWindowsToPrimary: String { s("forceNewWindowsToPrimary") }
-    static var previewOnHover: String { s("previewOnHover") }
-    static var hoverDelay: String { s("hoverDelay") }
     static var language: String { s("language") }
     static var permissions: String { s("permissions") }
     static var accessibilityGranted: String { s("accessibilityGranted") }
@@ -59,12 +53,7 @@ struct L10n {
     static var screenRecordingRequired: String { s("screenRecordingRequired") }
     static var copyDiagnostics: String { s("copyDiagnostics") }
     static var diagnosticsCopied: String { s("diagnosticsCopied") }
-
-    // MARK: - Appearance Tab
-
     static var thumbnailSize: String { s("thumbnailSize") }
-    static var showWindowTitles: String { s("showWindowTitles") }
-    static var livePreviewOnHover: String { s("livePreviewOnHover") }
 
     // MARK: - About Tab
 
@@ -115,16 +104,10 @@ struct L10n {
         "quitDockPeek": "Quit DockPeek",
 
         "general": "General",
-        "behavior": "Behavior",
-        "appearance": "Appearance",
         "update": "Update",
         "about": "About",
 
-        "enableDockPeek": "Enable DockPeek",
         "launchAtLogin": "Launch at login",
-        "forceNewWindowsToPrimary": "Force new windows to primary display",
-        "previewOnHover": "Preview on mouse hover",
-        "hoverDelay": "Hover delay",
         "language": "Language",
         "permissions": "Permissions",
         "accessibilityGranted": "Accessibility: Granted",
@@ -134,10 +117,7 @@ struct L10n {
         "screenRecordingRequired": "Screen Recording: Required",
         "copyDiagnostics": "Copy Diagnostics",
         "diagnosticsCopied": "Copied!",
-
         "thumbnailSize": "Thumbnail size",
-        "showWindowTitles": "Show window titles",
-        "livePreviewOnHover": "Live preview on hover",
 
         "version": "Version",
         "buyMeACoffee": "Buy me a coffee",
@@ -187,16 +167,10 @@ struct L10n {
         "quitDockPeek": "DockPeek 종료",
 
         "general": "일반",
-        "behavior": "동작",
-        "appearance": "모양",
         "update": "업데이트",
         "about": "정보",
 
-        "enableDockPeek": "DockPeek 활성화",
         "launchAtLogin": "로그인 시 자동 실행",
-        "forceNewWindowsToPrimary": "새 창을 메인 디스플레이에 표시",
-        "previewOnHover": "마우스 호버시 프리뷰",
-        "hoverDelay": "호버 지연 시간",
         "language": "언어",
         "permissions": "권한",
         "accessibilityGranted": "손쉬운 사용: 허용됨",
@@ -206,10 +180,7 @@ struct L10n {
         "screenRecordingRequired": "화면 기록: 필요",
         "copyDiagnostics": "진단 정보 복사",
         "diagnosticsCopied": "복사됨!",
-
         "thumbnailSize": "미리보기 크기",
-        "showWindowTitles": "창 제목 표시",
-        "livePreviewOnHover": "마우스 호버 시 실시간 미리보기",
 
         "version": "버전",
         "buyMeACoffee": "커피 한 잔 사주기",

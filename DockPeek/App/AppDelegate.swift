@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegate, NSWindowDelegate {
@@ -32,7 +31,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var hoverTimer: DispatchWorkItem?
     private var hoverDismissTimer: DispatchWorkItem?
     private var lastHoveredBundleID: String?
-    private var hoverSettingObserver: AnyCancellable?
 
     // AX hit-test cache: avoid redundant AX calls for same position within 100ms
     private var cachedAXHitResult: (point: CGPoint, result: DockApp?, timestamp: Date)?
@@ -51,8 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     func applicationWillTerminate(_ notification: Notification) {
         eventTapManager.stop()
         stopHoverMonitor()
-        hoverSettingObserver?.cancel()
-        hoverSettingObserver = nil
         permissionMonitorTimer?.invalidate()
         accessibilityTimer?.invalidate()
         if let m = cmdCommaMonitor { NSEvent.removeMonitor(m) }
@@ -75,14 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         if AccessibilityManager.shared.isAccessibilityGranted {
             startEventTap()
-            if appState.previewOnHover { startHoverMonitor() }
+            startHoverMonitor()
             startPermissionMonitor()
         } else {
             showOnboarding()
             startAccessibilityPolling()
         }
-
-        observeHoverSetting()
 
         // Auto-check for updates (respects cooldown, interval, and user setting)
         if appState.autoUpdateEnabled && appState.updateCheckInterval != "manual" {
@@ -254,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             guard let self else { timer.invalidate(); return }
             if AccessibilityManager.shared.isAccessibilityGranted {
                 self.startEventTap()
-                if self.appState.previewOnHover { self.startHoverMonitor() }
+                self.startHoverMonitor()
                 timer.invalidate()
                 self.accessibilityTimer = nil
                 self.startPermissionMonitor()
@@ -271,28 +265,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 
     // MARK: - Hover Monitor
-
-    /// Observe previewOnHover toggle — start/stop monitor dynamically.
-    /// Uses targeted UserDefaults KVO instead of objectWillChange to avoid
-    /// reacting to every AppState property change.
-    private func observeHoverSetting() {
-        hoverSettingObserver = NotificationCenter.default
-            .publisher(for: UserDefaults.didChangeNotification)
-            .compactMap { [weak self] _ -> Bool? in self?.appState.previewOnHover }
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] enabled in
-                guard let self else { return }
-                if enabled {
-                    if self.hoverPollTimer == nil,
-                       AccessibilityManager.shared.isAccessibilityGranted {
-                        self.startHoverMonitor()
-                    }
-                } else {
-                    self.stopHoverMonitor()
-                }
-            }
-    }
 
     private func startHoverMonitor() {
         stopHoverMonitor()
@@ -425,8 +397,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     /// Called from the poll timer when mouse is near the dock or preview panel.
     /// Accepts pre-computed cgPoint to avoid redundant coordinate conversion.
     fileprivate func processHoverEvent(cgPoint: CGPoint) {
-        guard appState.previewOnHover else { return }
-
         // Convert CG point back to Cocoa for panel frame check
         let screenH = NSScreen.screens.first?.frame.height ?? 0
         let cocoaLoc = NSPoint(x: cgPoint.x, y: screenH - cgPoint.y)
@@ -509,7 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 self?.handleHoverPreview(for: pid, at: cgPoint)
             }
             hoverTimer = task
-            DispatchQueue.main.asyncAfter(deadline: .now() + appState.hoverDelay, execute: task)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
         }
     }
 
@@ -527,8 +497,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 
     private func handleHoverPreview(for pid: pid_t, at point: CGPoint) {
-        guard appState.previewOnHover else { return }
-
         let windows = windowManager.windowsForApp(pid: pid)
         guard !windows.isEmpty else { return }
 
@@ -562,8 +530,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     // MARK: - EventTapManagerDelegate
 
     func eventTapManager(_ manager: EventTapManager, didDetectClickAt point: CGPoint) -> Bool {
-        guard appState.isEnabled else { return false }
-
         // Cancel any pending hover timer on click
         hoverTimer?.cancel()
         hoverTimer = nil
@@ -640,9 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         // App not running → Dock will launch it. Warp cursor to primary
         // BEFORE the click reaches Dock so macOS natively places the window there.
         guard dockApp.isRunning, let pid = dockApp.pid else {
-            if appState.forceNewWindowsToPrimary {
-                warpCursorToPrimaryBriefly()
-            }
+            warpCursorToPrimaryBriefly()
             return false
         }
         if appState.isExcluded(bundleID: dockApp.bundleIdentifier) { return false }
@@ -652,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         // Running app with < 2 windows: Dock click will create/activate a window.
         // Warp cursor so the new window appears on primary.
-        if windows.count < 2, appState.forceNewWindowsToPrimary {
+        if windows.count < 2 {
             warpCursorToPrimaryBriefly()
             return false
         }
@@ -766,7 +730,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 
     @objc private func appDidLaunch(_ note: Notification) {
-        guard appState.forceNewWindowsToPrimary else { return }
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         let pid = app.processIdentifier
         if app.bundleIdentifier == Bundle.main.bundleIdentifier { return }
@@ -825,7 +788,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         let backoffDelays: [Double] = [0.1, 0.3, 0.7, 1.2, 2.0]
         for delay in backoffDelays {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard self?.appState.forceNewWindowsToPrimary == true else { return }
                 self?.moveAppWindowToPrimaryIfNeeded(axApp: axAppRef)
             }
         }
@@ -899,7 +861,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         previewPanel.showPreview(
             windows: enriched,
             thumbnailSize: thumbSize,
-            showTitles: appState.showWindowTitles,
+            showTitles: true,
             near: point,
             onSelect: { [weak self] win in
                 self?.highlightOverlay.hide()
@@ -931,7 +893,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 self?.previewPanel.dismissPanel()
             },
             onHoverWindow: { [weak self] (win: WindowInfo?) in
-                guard let self, self.appState.livePreviewOnHover else { return }
+                guard let self else { return }
                 if let win {
                     self.highlightOverlay.show(for: win, cachedImage: win.thumbnail)
                 } else {

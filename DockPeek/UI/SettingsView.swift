@@ -10,10 +10,6 @@ struct SettingsView: View {
         TabView {
             generalTab
                 .tabItem { Label(L10n.general, systemImage: "gear") }
-            behaviorTab
-                .tabItem { Label(L10n.behavior, systemImage: "cursorarrow.click.2") }
-            appearanceTab
-                .tabItem { Label(L10n.appearance, systemImage: "paintbrush") }
             updateTab
                 .tabItem {
                     if updateChecker.updateAvailable {
@@ -34,7 +30,6 @@ struct SettingsView: View {
 
     private var generalTab: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Toggle(L10n.enableDockPeek, isOn: $appState.isEnabled)
             Toggle(L10n.launchAtLogin, isOn: $appState.launchAtLogin)
                 .onChange(of: appState.launchAtLogin) { _, newValue in
                     do {
@@ -68,30 +63,11 @@ struct SettingsView: View {
 
             Divider()
 
-            // Permissions
-            permissionStatus
-
-            Spacer()
-        }
-        .padding(.top, 8)
-    }
-
-    // MARK: - Behavior
-
-    private var behaviorTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Toggle(L10n.forceNewWindowsToPrimary, isOn: $appState.forceNewWindowsToPrimary)
-
-            Divider()
-
-            Toggle(L10n.previewOnHover, isOn: $appState.previewOnHover)
-
-            if appState.previewOnHover {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(L10n.hoverDelay): \(String(format: "%.1f", appState.hoverDelay))s")
-                        .font(.caption).foregroundColor(.secondary)
-                    Slider(value: $appState.hoverDelay, in: 0.3...2.0, step: 0.1)
-                }
+            // Thumbnail size
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(L10n.thumbnailSize): \(Int(appState.thumbnailSize))px")
+                    .font(.caption).foregroundColor(.secondary)
+                Slider(value: $appState.thumbnailSize, in: 120...360, step: 20)
             }
 
             Divider()
@@ -99,23 +75,10 @@ struct SettingsView: View {
             // Excluded apps
             exclusionList
 
-            Spacer()
-        }
-        .padding(.top, 8)
-    }
+            Divider()
 
-    // MARK: - Appearance
-
-    private var appearanceTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(L10n.thumbnailSize): \(Int(appState.thumbnailSize))px")
-                    .font(.caption).foregroundColor(.secondary)
-                Slider(value: $appState.thumbnailSize, in: 120...360, step: 20)
-            }
-
-            Toggle(L10n.showWindowTitles, isOn: $appState.showWindowTitles)
-            Toggle(L10n.livePreviewOnHover, isOn: $appState.livePreviewOnHover)
+            // Permissions
+            permissionStatus
 
             Spacer()
         }
