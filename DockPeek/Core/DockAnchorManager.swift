@@ -89,6 +89,12 @@ final class DockAnchorManager {
         eventTap = tap
         runLoopSource = source
         dpLog("DockAnchor: tap installed on Dock pid \(pid)")
+
+        if isDockOnNonPrimary() {
+            DispatchQueue.main.async { [weak self] in
+                self?.warpDockToPrimary()
+            }
+        }
     }
 
     func stop() {
@@ -111,6 +117,68 @@ final class DockAnchorManager {
             return nil
         }
         return Unmanaged.passUnretained(event)
+    }
+
+    /// True if Dock's first window lives on a non-primary screen.
+    private func isDockOnNonPrimary() -> Bool {
+        guard dockPID != 0 else { return false }
+        let axApp = AXUIElementCreateApplication(dockPID)
+
+        var windowsRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement],
+              let first = windows.first else { return false }
+
+        var posRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(first, kAXPositionAttribute as CFString, &posRef) == .success,
+              let p = posRef else { return false }
+
+        var pos = CGPoint.zero
+        AXValueGetValue(p as! AXValue, .cgPoint, &pos)
+
+        guard let primary = NSScreen.screens.first else { return false }
+        let primaryH = primary.frame.height
+        let primaryCG = CGRect(
+            x: primary.frame.minX,
+            y: primaryH - primary.frame.maxY,
+            width: primary.frame.width,
+            height: primary.frame.height
+        )
+        return !primaryCG.contains(pos)
+    }
+
+    /// One-time synthetic cursor warp to the primary's trigger point.
+    /// This is the ONLY situation in which we let the Dock move.
+    private func warpDockToPrimary() {
+        guard let primary = NSScreen.screens.first else { return }
+        let primaryH = primary.frame.height
+        let f = primary.frame
+
+        let target: CGPoint
+        switch dockOrientation {
+        case "left":
+            target = CGPoint(x: f.minX + 1, y: primaryH - f.midY)
+        case "right":
+            target = CGPoint(x: f.maxX - 1, y: primaryH - f.midY)
+        default: // "bottom"
+            target = CGPoint(x: f.midX, y: primaryH - f.minY - 1)
+        }
+
+        let original = CGEvent(source: nil)?.location ?? target
+        dpLog("DockAnchor: warping cursor to primary trigger \(target) (restore to \(original))")
+
+        // Briefly disable our tap so our synthetic events aren't filtered
+        if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: false) }
+
+        // Hold at the trigger point for a few frames so the Dock latches
+        for _ in 0..<6 {
+            CGWarpMouseCursorPosition(target)
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        // Restore original position
+        CGWarpMouseCursorPosition(original)
+
+        if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
     }
 
     private static func findDockPID() -> pid_t? {
