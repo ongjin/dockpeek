@@ -43,6 +43,11 @@ struct SettingsView: View {
                     }
                 }
 
+            Toggle(L10n.anchorDockToPrimary, isOn: $appState.anchorDockToPrimary)
+                .onChange(of: appState.anchorDockToPrimary) { _, _ in
+                    (NSApp.delegate as? AppDelegate)?.applyDockAnchorSetting()
+                }
+
             Divider()
 
             // Language picker

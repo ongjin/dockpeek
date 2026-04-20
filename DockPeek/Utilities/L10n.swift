@@ -44,6 +44,7 @@ struct L10n {
     // MARK: - General Tab
 
     static var launchAtLogin: String { s("launchAtLogin") }
+    static var anchorDockToPrimary: String { s("anchorDockToPrimary") }
     static var language: String { s("language") }
     static var permissions: String { s("permissions") }
     static var accessibilityGranted: String { s("accessibilityGranted") }
@@ -108,6 +109,7 @@ struct L10n {
         "about": "About",
 
         "launchAtLogin": "Launch at login",
+        "anchorDockToPrimary": "Anchor dock to primary display",
         "language": "Language",
         "permissions": "Permissions",
         "accessibilityGranted": "Accessibility: Granted",
@@ -171,6 +173,7 @@ struct L10n {
         "about": "정보",
 
         "launchAtLogin": "로그인 시 자동 실행",
+        "anchorDockToPrimary": "Dock을 메인 디스플레이에 고정",
         "language": "언어",
         "permissions": "권한",
         "accessibilityGranted": "손쉬운 사용: 허용됨",
