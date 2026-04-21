@@ -61,9 +61,11 @@ final class WindowManager {
     private var windowListCache: [pid_t: ([[String: Any]], Date)] = [:]
     private let windowListCacheTTL: TimeInterval = 0.5
 
-    /// AX window IDs cache: pid → (ids, timestamp)
-    private var axWindowIDsCache: [pid_t: (Set<CGWindowID>, Date)] = [:]
-    private let axWindowIDsCacheTTL: TimeInterval = 1.0
+    /// AX window info cache: pid → (windowID → documentURL?, timestamp).
+    /// The dictionary's keys act as the set of "real" AX window IDs; values
+    /// carry the optional document URL for document-backed windows.
+    private var axWindowInfoCache: [pid_t: ([CGWindowID: URL?], Date)] = [:]
+    private let axWindowInfoCacheTTL: TimeInterval = 1.0
 
     /// Per-app stable window order. Keyed by bundleID so restarts of the target
     /// app (which generate fresh CGWindowIDs) naturally reset the order.
@@ -129,10 +131,17 @@ final class WindowManager {
         // Cross-reference with AX windows to filter out overlays/helper windows.
         // AX kAXWindowsAttribute only returns "real" user-facing windows,
         // excluding Chrome translation bars, tooltips, popovers, etc.
-        let axIDs = axWindowIDs(for: pid)
-        if !axIDs.isEmpty {
+        let axInfo = axWindowInfo(for: pid)
+        if !axInfo.isEmpty {
             let before = windows.count
-            windows = windows.filter { axIDs.contains($0.id) }
+            windows = windows.compactMap { w in
+                guard axInfo.keys.contains(w.id) else { return nil }
+                var copy = w
+                if let maybeURL = axInfo[w.id], let url = maybeURL {
+                    copy.documentURL = url
+                }
+                return copy
+            }
             if windows.count != before {
                 dpLog("AX filter: \(before) → \(windows.count) windows for PID \(pid)")
             }
@@ -163,23 +172,24 @@ final class WindowManager {
         return windows
     }
 
-    /// Get the set of CGWindowIDs that correspond to real standard AX windows.
-    /// Filters out popups, dialogs, floating panels, overlays (e.g. Chrome translation bar).
-    /// Results are cached for 1 second to avoid redundant AX IPC calls.
-    private func axWindowIDs(for pid: pid_t) -> Set<CGWindowID> {
+    /// Get real standard AX windows (filters out popups, dialogs, floating panels,
+    /// overlays) and their document URLs where available. Returns a dictionary
+    /// keyed by CGWindowID; values are the window's document URL or nil.
+    /// Results are cached briefly to avoid redundant AX IPC calls.
+    private func axWindowInfo(for pid: pid_t) -> [CGWindowID: URL?] {
         let now = Date()
-        if let cached = axWindowIDsCache[pid],
-           now.timeIntervalSince(cached.1) < axWindowIDsCacheTTL {
+        if let cached = axWindowInfoCache[pid],
+           now.timeIntervalSince(cached.1) < axWindowInfoCacheTTL {
             return cached.0
         }
 
-        guard let getWindow = _axGetWindow else { return [] }
+        guard let getWindow = _axGetWindow else { return [:] }
         let axApp = AXUIElementCreateApplication(pid)
         var ref: AnyObject?
         guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &ref) == .success,
-              let axWindows = ref as? [AXUIElement] else { return [] }
+              let axWindows = ref as? [AXUIElement] else { return [:] }
 
-        var ids = Set<CGWindowID>()
+        var result: [CGWindowID: URL?] = [:]
         for axWin in axWindows {
             // Only include standard windows (skip dialogs, floating panels, popups)
             var subroleRef: AnyObject?
@@ -191,12 +201,21 @@ final class WindowManager {
             }
 
             var wid: CGWindowID = 0
-            if getWindow(axWin, &wid) == .success, wid != 0 {
-                ids.insert(wid)
+            guard getWindow(axWin, &wid) == .success, wid != 0 else { continue }
+
+            // kAXDocumentAttribute typically returns a file:// URL string for
+            // document-backed windows. Editors, Finder windows, and some IDEs
+            // set it; browsers and chat apps usually don't.
+            var docRef: AnyObject?
+            AXUIElementCopyAttributeValue(axWin, kAXDocumentAttribute as CFString, &docRef)
+            var url: URL?
+            if let s = docRef as? String {
+                url = URL(string: s) ?? URL(fileURLWithPath: s)
             }
+            result[wid] = url
         }
-        axWindowIDsCache[pid] = (ids, now)
-        return ids
+        axWindowInfoCache[pid] = (result, now)
+        return result
     }
 
     // MARK: - Thumbnails
@@ -392,7 +411,7 @@ final class WindowManager {
 
         // Invalidate caches so the next windowsForApp(pid:) sees the post-close state
         windowListCache.removeValue(forKey: pid)
-        axWindowIDsCache.removeValue(forKey: pid)
+        axWindowInfoCache.removeValue(forKey: pid)
 
         dpLog("Closed window \(windowID)")
     }
