@@ -74,6 +74,22 @@ struct SettingsView: View {
 
             Divider()
 
+            // Preview appearance
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.previewAppearance)
+                    .font(.caption).foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(L10n.previewOpacity): \(Int(appState.previewOpacity * 100))%")
+                        .font(.caption).foregroundColor(.secondary)
+                    Slider(value: $appState.previewOpacity, in: 0.5...0.9, step: 0.05)
+                }
+
+                Toggle(L10n.previewAccentTint, isOn: $appState.previewUseAccentTint)
+            }
+
+            Divider()
+
             // Excluded apps
             exclusionList
 

@@ -897,6 +897,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             windows: enriched,
             thumbnailSize: thumbSize,
             showTitles: true,
+            backgroundOpacity: CGFloat(appState.previewOpacity),
+            useAccentTint: appState.previewUseAccentTint,
             near: point,
             onSelect: { [weak self] win in
                 self?.highlightOverlay.hide()
@@ -919,8 +921,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 self.windowManager.closeWindow(windowID: win.id, pid: win.ownerPID)
             },
             onSnap: { [weak self] win, position in
+                // Keep the preview open — user may want to snap another window
+                // or continue interacting. Hide the highlight overlay because
+                // the snapped window's position has changed.
                 self?.highlightOverlay.hide()
-                self?.previewPanel.dismissPanel(animated: false)
                 self?.windowManager.snapWindow(windowID: win.id, pid: win.ownerPID, position: position)
             },
             onDismiss: { [weak self] in

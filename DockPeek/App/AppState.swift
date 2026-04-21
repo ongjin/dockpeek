@@ -13,6 +13,8 @@ final class AppState: ObservableObject {
     @AppStorage("appLanguage") var language: String = "en"
     @AppStorage("autoUpdateEnabled") var autoUpdateEnabled = true
     @AppStorage("updateCheckInterval") var updateCheckInterval = "daily" // "daily", "weekly", "manual"
+    @AppStorage("previewOpacity") var previewOpacity: Double = 0.9
+    @AppStorage("previewUseAccentTint") var previewUseAccentTint: Bool = true
 
     private lazy var cachedExcludedBundleIDs: Set<String> = Self.parseExcludedIDs(excludedBundleIDsRaw)
 

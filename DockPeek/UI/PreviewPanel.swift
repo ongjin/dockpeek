@@ -19,6 +19,8 @@ final class PreviewPanel: NSPanel {
     private var storedOnHoverWindow: ((WindowInfo?) -> Void)?
     private var storedThumbnailSize: CGFloat = 200
     private var storedShowTitles = true
+    private var storedBackgroundOpacity: CGFloat = 0.9
+    private var storedUseAccentTint = true
     private var dismissGeneration = 0
 
     init() {
@@ -48,6 +50,8 @@ final class PreviewPanel: NSPanel {
         windows: [WindowInfo],
         thumbnailSize: CGFloat,
         showTitles: Bool,
+        backgroundOpacity: CGFloat,
+        useAccentTint: Bool,
         near point: CGPoint,
         onSelect: @escaping (WindowInfo) -> Void,
         onClose: @escaping (WindowInfo) -> Void = { _ in },
@@ -64,12 +68,16 @@ final class PreviewPanel: NSPanel {
         storedOnHoverWindow = onHoverWindow
         storedThumbnailSize = thumbnailSize
         storedShowTitles = showTitles
+        storedBackgroundOpacity = backgroundOpacity
+        storedUseAccentTint = useAccentTint
         navState.reset()
 
         let content = PreviewContentView(
             windows: windows,
             thumbnailSize: thumbnailSize,
             showTitles: showTitles,
+            backgroundOpacity: backgroundOpacity,
+            useAccentTint: useAccentTint,
             onSelect: onSelect,
             onClose: onClose,
             onSnap: onSnap,
@@ -116,6 +124,8 @@ final class PreviewPanel: NSPanel {
             windows: windows,
             thumbnailSize: storedThumbnailSize,
             showTitles: storedShowTitles,
+            backgroundOpacity: storedBackgroundOpacity,
+            useAccentTint: storedUseAccentTint,
             onSelect: onSelect,
             onClose: onClose,
             onSnap: onSnap,
@@ -157,6 +167,8 @@ final class PreviewPanel: NSPanel {
             windows: filtered,
             thumbnailSize: storedThumbnailSize,
             showTitles: storedShowTitles,
+            backgroundOpacity: storedBackgroundOpacity,
+            useAccentTint: storedUseAccentTint,
             onSelect: onSelect,
             onClose: onClose,
             onSnap: onSnap,

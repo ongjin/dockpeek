@@ -4,6 +4,8 @@ struct PreviewContentView: View {
     let windows: [WindowInfo]
     let thumbnailSize: CGFloat
     let showTitles: Bool
+    let backgroundOpacity: CGFloat
+    let useAccentTint: Bool
     let onSelect: (WindowInfo) -> Void
     let onClose: (WindowInfo) -> Void
     let onSnap: (WindowInfo, SnapPosition) -> Void
@@ -30,6 +32,7 @@ struct PreviewContentView: View {
         .padding(16)
         .background(
             VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
+                .opacity(backgroundOpacity)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         )
         .overlay(
@@ -54,7 +57,7 @@ struct PreviewContentView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(width: thumbnailSize)
-                    .foregroundColor(.accentColor.opacity(0.9))
+                    .foregroundColor(useAccentTint ? .accentColor.opacity(0.9) : .primary.opacity(0.8))
             }
 
             thumbnailView(w)
@@ -63,7 +66,7 @@ struct PreviewContentView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(
-                            keySelected ? Color.accentColor : (hovered ? Color.accentColor : Color.white.opacity(0.08)),
+                            highlightBorderColor(highlighted: highlighted),
                             lineWidth: highlighted ? 2 : 0.5
                         )
                 )
@@ -133,6 +136,11 @@ struct PreviewContentView: View {
         }
         .onTapGesture { onSelect(w) }
         .accessibilityLabel(w.displayTitle)
+    }
+
+    private func highlightBorderColor(highlighted: Bool) -> Color {
+        guard highlighted else { return Color.white.opacity(0.08) }
+        return useAccentTint ? .accentColor : .white.opacity(0.85)
     }
 
     @ViewBuilder

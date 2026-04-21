@@ -63,6 +63,9 @@ struct L10n {
     static var copyDiagnostics: String { s("copyDiagnostics") }
     static var diagnosticsCopied: String { s("diagnosticsCopied") }
     static var thumbnailSize: String { s("thumbnailSize") }
+    static var previewAppearance: String { s("previewAppearance") }
+    static var previewOpacity: String { s("previewOpacity") }
+    static var previewAccentTint: String { s("previewAccentTint") }
 
     // MARK: - About Tab
 
@@ -134,6 +137,9 @@ struct L10n {
         "copyDiagnostics": "Copy Diagnostics",
         "diagnosticsCopied": "Copied!",
         "thumbnailSize": "Thumbnail size",
+        "previewAppearance": "Preview appearance",
+        "previewOpacity": "Preview opacity",
+        "previewAccentTint": "Use accent color tint",
 
         "version": "Version",
         "buyMeACoffee": "Buy me a coffee",
@@ -204,6 +210,9 @@ struct L10n {
         "copyDiagnostics": "진단 정보 복사",
         "diagnosticsCopied": "복사됨!",
         "thumbnailSize": "미리보기 크기",
+        "previewAppearance": "미리보기 외관",
+        "previewOpacity": "미리보기 투명도",
+        "previewAccentTint": "강조색 테마 사용",
 
         "version": "버전",
         "buyMeACoffee": "커피 한 잔 사주기",
