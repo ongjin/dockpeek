@@ -54,7 +54,7 @@ struct PreviewContentView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(width: thumbnailSize)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.accentColor.opacity(0.9))
             }
 
             thumbnailView(w)
