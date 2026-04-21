@@ -10,6 +10,11 @@ struct WindowInfo: Identifiable {
     let isMinimized: Bool
     var thumbnail: NSImage?
     var documentURL: URL?
+    /// Pre-resolved project / workspace root, populated by WindowManager.
+    /// For document-backed windows this is the URL trimmed at the outermost
+    /// path component also mentioned in the title; for JetBrains windows it
+    /// is looked up from the IDE's recentProjects.xml.
+    var projectRoot: URL?
 
     var displayTitle: String {
         title.isEmpty ? ownerName : title
@@ -25,48 +30,23 @@ struct WindowInfo: Identifiable {
         return WindowInfo.parsedTitle(title)?.file
     }
 
-    /// Abbreviated path ending at the project/workspace root. Editors like
-    /// VS Code and Cursor set the AX document URL to the currently-focused
-    /// file, so showing only its parent directory exposes an internal file
-    /// location rather than the project folder the user actually opened.
-    /// Here we match segments of the window title against directories in the
-    /// URL and keep the outermost match, which is typically the workspace
-    /// root the editor displays in the title bar. For windows without a
-    /// document URL (JetBrains etc.) falls back to the folder name parsed
-    /// from the title — we don't know the full path in that case.
+    /// Abbreviated path to show above the thumbnail. If a project root was
+    /// resolved upstream it wins; otherwise we fall back to the folder name
+    /// parsed from the title (displayed without a path).
     var displayParentPath: String? {
-        if let url = documentURL {
-            let components = url.pathComponents
-            guard components.count > 2 else { return nil }
-
-            if !title.isEmpty {
-                let segments = WindowInfo.titleSegments(title)
-                if !segments.isEmpty {
-                    for i in 1..<(components.count - 1) {
-                        if segments.contains(components[i]) {
-                            let joined = components.dropFirst().prefix(i + 1).joined(separator: "/")
-                            return ("/" + joined as NSString).abbreviatingWithTildeInPath
-                        }
-                    }
-                }
+        if let root = projectRoot {
+            let path = root.path
+            if !path.isEmpty, path != "/" {
+                return (path as NSString).abbreviatingWithTildeInPath
             }
-
-            let parent = url.deletingLastPathComponent().path
-            guard !parent.isEmpty, parent != "/" else { return nil }
-            return (parent as NSString).abbreviatingWithTildeInPath
         }
-
         return WindowInfo.parsedTitle(title)?.folder
     }
 
-    private static func titleSegments(_ title: String) -> Set<String> {
-        var parts: [String] = [title]
-        for sep in [" — ", " – ", " - "] {
-            parts = parts.flatMap { $0.components(separatedBy: sep) }
-        }
-        return Set(parts
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty })
+    /// Exposed for WindowManager so it can look up JetBrains projects by the
+    /// folder segment of the title.
+    static func folderName(fromTitle title: String) -> String? {
+        parsedTitle(title)?.folder
     }
 
     /// Attempt to split a "file — folder" / "folder — file" style title into
