@@ -652,8 +652,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         guard windows.count >= 2 else { return false }
 
-        // Suppress click and show preview asynchronously
+        // Suppress click and show preview asynchronously.
+        // Record the clicked bundle BEFORE dispatching — the hover poll runs
+        // at ~15Hz and would otherwise see `lastHoveredBundleID == nil`, treat
+        // the mouse-on-dock position as a fresh hover, dismiss the just-shown
+        // panel and re-show it (visible as a flicker since showPreview fades
+        // from alpha 0 each time).
         dpLog("Will show preview for \(dockApp.name) (\(windows.count) windows)")
+        lastHoveredBundleID = dockApp.bundleIdentifier ?? dockApp.name
         DispatchQueue.main.async { [weak self] in
             self?.showPreviewForWindows(windows, at: point)
         }
