@@ -35,6 +35,14 @@ brew install --cask dockpeek
 > **First launch:** macOS will block the app because it is self-signed (not notarized by Apple).
 > Go to **System Settings → Privacy & Security → Security** and click **"Open Anyway"** next to the DockPeek message.
 
+> **Antivirus false positives:** Some third-party antivirus tools may flag or quarantine DockPeek.
+> This is a false positive: the release binary is self-signed rather than signed with an Apple
+> Developer ID, and DockPeek uses a system-wide `CGEventTap` plus private SkyLight APIs for
+> Dock-click interception and window activation — a combination that trips heuristic scanners.
+> If this happens, either allow/whitelist the app in your AV tool, or [build from source](#build-from-source)
+> yourself — the full source is in this repo and `make setup` produces a binary locally signed
+> with your own dev certificate.
+
 ### Build from Source
 
 ```bash
