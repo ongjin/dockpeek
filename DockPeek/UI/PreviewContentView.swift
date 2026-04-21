@@ -51,15 +51,6 @@ struct PreviewContentView: View {
         let highlighted = hovered || keySelected
 
         VStack(spacing: 4) {
-            if showTitles, let parent = w.displayParentPath {
-                Text(parent)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(width: thumbnailSize)
-                    .foregroundColor(useAccentTint ? .accentColor.opacity(0.9) : .primary.opacity(0.8))
-            }
-
             thumbnailView(w)
                 .frame(width: thumbnailSize, height: thumbnailSize * 0.625)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -110,7 +101,7 @@ struct PreviewContentView: View {
                 }
 
             if showTitles {
-                Text(w.displayFileName ?? w.displayTitle)
+                Text(w.displayTitle)
                     .font(.caption)
                     .lineLimit(1)
                     .truncationMode(.middle)

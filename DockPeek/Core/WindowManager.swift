@@ -61,17 +61,9 @@ final class WindowManager {
     private var windowListCache: [pid_t: ([[String: Any]], Date)] = [:]
     private let windowListCacheTTL: TimeInterval = 0.5
 
-    /// AX window info cache: pid → (windowID → documentURL?, timestamp).
-    /// The dictionary's keys act as the set of "real" AX window IDs; values
-    /// carry the optional document URL for document-backed windows.
-    private var axWindowInfoCache: [pid_t: ([CGWindowID: URL?], Date)] = [:]
-    private let axWindowInfoCacheTTL: TimeInterval = 1.0
-
-    /// Lazy cache of JetBrains IDE project paths keyed by folder name.
-    /// Loaded on first read from each installed IDE's recentProjects.xml.
-    /// Folder names that appear in more than one IDE config are omitted so
-    /// we don't pick an arbitrary winner for ambiguous names.
-    private var _jetbrainsProjects: [String: URL]?
+    /// AX window IDs cache: pid → (ids, timestamp)
+    private var axWindowIDsCache: [pid_t: (Set<CGWindowID>, Date)] = [:]
+    private let axWindowIDsCacheTTL: TimeInterval = 1.0
 
     /// Per-app stable window order. Keyed by bundleID so restarts of the target
     /// app (which generate fresh CGWindowIDs) naturally reset the order.
@@ -137,24 +129,13 @@ final class WindowManager {
         // Cross-reference with AX windows to filter out overlays/helper windows.
         // AX kAXWindowsAttribute only returns "real" user-facing windows,
         // excluding Chrome translation bars, tooltips, popovers, etc.
-        let axInfo = axWindowInfo(for: pid)
-        if !axInfo.isEmpty {
+        let axIDs = axWindowIDs(for: pid)
+        if !axIDs.isEmpty {
             let before = windows.count
-            windows = windows.compactMap { w in
-                guard axInfo.keys.contains(w.id) else { return nil }
-                var copy = w
-                if let maybeURL = axInfo[w.id], let url = maybeURL {
-                    copy.documentURL = url
-                }
-                return copy
-            }
+            windows = windows.filter { axIDs.contains($0.id) }
             if windows.count != before {
                 dpLog("AX filter: \(before) → \(windows.count) windows for PID \(pid)")
             }
-        }
-
-        for i in windows.indices {
-            windows[i].projectRoot = resolveProjectRoot(for: windows[i])
         }
 
         // Apply stable per-bundle ordering. New windows go to the end; existing
@@ -182,24 +163,23 @@ final class WindowManager {
         return windows
     }
 
-    /// Get real standard AX windows (filters out popups, dialogs, floating panels,
-    /// overlays) and their document URLs where available. Returns a dictionary
-    /// keyed by CGWindowID; values are the window's document URL or nil.
-    /// Results are cached briefly to avoid redundant AX IPC calls.
-    private func axWindowInfo(for pid: pid_t) -> [CGWindowID: URL?] {
+    /// Get the set of CGWindowIDs that correspond to real standard AX windows.
+    /// Filters out popups, dialogs, floating panels, overlays (e.g. Chrome translation bar).
+    /// Results are cached for 1 second to avoid redundant AX IPC calls.
+    private func axWindowIDs(for pid: pid_t) -> Set<CGWindowID> {
         let now = Date()
-        if let cached = axWindowInfoCache[pid],
-           now.timeIntervalSince(cached.1) < axWindowInfoCacheTTL {
+        if let cached = axWindowIDsCache[pid],
+           now.timeIntervalSince(cached.1) < axWindowIDsCacheTTL {
             return cached.0
         }
 
-        guard let getWindow = _axGetWindow else { return [:] }
+        guard let getWindow = _axGetWindow else { return [] }
         let axApp = AXUIElementCreateApplication(pid)
         var ref: AnyObject?
         guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &ref) == .success,
-              let axWindows = ref as? [AXUIElement] else { return [:] }
+              let axWindows = ref as? [AXUIElement] else { return [] }
 
-        var result: [CGWindowID: URL?] = [:]
+        var ids = Set<CGWindowID>()
         for axWin in axWindows {
             // Only include standard windows (skip dialogs, floating panels, popups)
             var subroleRef: AnyObject?
@@ -211,143 +191,12 @@ final class WindowManager {
             }
 
             var wid: CGWindowID = 0
-            guard getWindow(axWin, &wid) == .success, wid != 0 else { continue }
-
-            // kAXDocumentAttribute typically returns a file:// URL string for
-            // document-backed windows. Editors, Finder windows, and some IDEs
-            // set it; browsers and chat apps usually don't. We intentionally
-            // ignore non-file URLs — Chrome stamps the active tab's http(s)
-            // URL here, and Electron apps sometimes emit a bare root — so we
-            // only accept local file URLs with a real path.
-            var docRef: AnyObject?
-            AXUIElementCopyAttributeValue(axWin, kAXDocumentAttribute as CFString, &docRef)
-            var url: URL?
-            if let s = docRef as? String, !s.isEmpty {
-                let candidate = URL(string: s) ?? URL(fileURLWithPath: s)
-                let scheme = candidate.scheme
-                let path = candidate.path
-                let isLocalFile = scheme == nil || scheme == "file"
-                if isLocalFile, !path.isEmpty, path != "/" {
-                    url = candidate
-                }
-            }
-            result[wid] = url
-        }
-        axWindowInfoCache[pid] = (result, now)
-        return result
-    }
-
-    // MARK: - Project Root Resolution
-
-    private func resolveProjectRoot(for w: WindowInfo) -> URL? {
-        if let url = w.documentURL {
-            return projectRoot(fromDocumentURL: url, title: w.title)
-        }
-        if let folder = WindowInfo.folderName(fromTitle: w.title),
-           let url = jetbrainsProjectByName()[folder] {
-            return url
-        }
-        return nil
-    }
-
-    /// Walk the document URL's path components and return the path trimmed
-    /// at the outermost segment that also appears in the window title. For
-    /// VS Code / Cursor this yields the workspace folder the editor shows
-    /// in the title. Falls back to the file's immediate parent directory
-    /// when no title segment matches.
-    private func projectRoot(fromDocumentURL url: URL, title: String) -> URL? {
-        let components = url.pathComponents
-        guard components.count > 2 else { return nil }
-
-        if !title.isEmpty {
-            let segments = titleSegments(title)
-            if !segments.isEmpty {
-                for i in 1..<(components.count - 1) {
-                    if segments.contains(components[i]) {
-                        let joined = components.dropFirst().prefix(i).joined(separator: "/")
-                        return URL(fileURLWithPath: "/" + joined)
-                    }
-                }
+            if getWindow(axWin, &wid) == .success, wid != 0 {
+                ids.insert(wid)
             }
         }
-
-        let parent = url.deletingLastPathComponent()
-        guard !parent.path.isEmpty, parent.path != "/" else { return nil }
-        return parent
-    }
-
-    private func titleSegments(_ title: String) -> Set<String> {
-        var parts: [String] = [title]
-        for sep in [" — ", " – ", " - "] {
-            parts = parts.flatMap { $0.components(separatedBy: sep) }
-        }
-        return Set(parts
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty })
-    }
-
-    /// Load project-root URLs from JetBrains + Android Studio recent-project
-    /// caches on disk, keyed by the final folder component so we can look up
-    /// a window's project by the folder segment parsed from its title.
-    /// When two recent projects share a folder name, we keep the one with
-    /// the most recent `projectOpenTimestamp` — that's usually the copy the
-    /// IDE currently has open.
-    private func jetbrainsProjectByName() -> [String: URL] {
-        if let cached = _jetbrainsProjects { return cached }
-
-        var collected: [String: [(url: URL, timestamp: Double)]] = [:]
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let configRoots = [
-            home.appendingPathComponent("Library/Application Support/JetBrains"),
-            home.appendingPathComponent("Library/Application Support/Google")
-        ]
-
-        for root in configRoots {
-            guard let children = try? fm.contentsOfDirectory(
-                at: root,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-
-            for ideDir in children {
-                let xml = ideDir.appendingPathComponent("options/recentProjects.xml")
-                guard let data = try? Data(contentsOf: xml),
-                      let doc = try? XMLDocument(data: data, options: []) else { continue }
-
-                let entries = (try? doc.nodes(forXPath: "//entry")) ?? []
-                for node in entries {
-                    guard let entry = node as? XMLElement,
-                          let key = entry.attribute(forName: "key")?.stringValue else { continue }
-                    let path = key.replacingOccurrences(of: "$USER_HOME$", with: home.path)
-                    guard path.hasPrefix("/") else { continue }
-                    let url = URL(fileURLWithPath: path)
-                    let name = url.lastPathComponent
-                    guard !name.isEmpty else { continue }
-
-                    let tsNodes = (try? entry.nodes(forXPath: ".//option[@name='projectOpenTimestamp']")) ?? []
-                    var timestamp: Double = 0
-                    if let tsElem = tsNodes.first as? XMLElement,
-                       let valueStr = tsElem.attribute(forName: "value")?.stringValue,
-                       let value = Double(valueStr) {
-                        timestamp = value
-                    }
-
-                    collected[name, default: []].append((url, timestamp))
-                }
-            }
-        }
-
-        var result: [String: URL] = [:]
-        for (name, pairs) in collected {
-            if let best = pairs.max(by: { $0.timestamp < $1.timestamp }) {
-                result[name] = best.url
-            }
-        }
-
-        _jetbrainsProjects = result
-        dpLog("jetbrains-projects: \(result.count) mappings loaded")
-        return result
+        axWindowIDsCache[pid] = (ids, now)
+        return ids
     }
 
     // MARK: - Thumbnails
@@ -543,7 +392,7 @@ final class WindowManager {
 
         // Invalidate caches so the next windowsForApp(pid:) sees the post-close state
         windowListCache.removeValue(forKey: pid)
-        axWindowInfoCache.removeValue(forKey: pid)
+        axWindowIDsCache.removeValue(forKey: pid)
 
         dpLog("Closed window \(windowID)")
     }

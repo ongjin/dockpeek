@@ -9,7 +9,12 @@ final class HighlightOverlay {
     private var isHiding = false
     private var overlayGeneration = 0
 
-    func show(for windowInfo: WindowInfo, cachedImage: NSImage? = nil) {
+    func show(
+        for windowInfo: WindowInfo,
+        cachedImage: NSImage? = nil,
+        opacity: CGFloat = 0.85,
+        useAccentTint: Bool = true
+    ) {
         // Skip if already showing for this window
         if currentWindowID == windowInfo.id { return }
 
@@ -57,11 +62,15 @@ final class HighlightOverlay {
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         }
 
+        let borderColor: NSColor = useAccentTint
+            ? NSColor.controlAccentColor.withAlphaComponent(0.8)
+            : NSColor.white.withAlphaComponent(0.85)
+
         let container = NSView(frame: NSRect(origin: .zero, size: cocoaRect.size))
         container.wantsLayer = true
         container.layer?.cornerRadius = 8
         container.layer?.masksToBounds = true
-        container.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
+        container.layer?.borderColor = borderColor.cgColor
         container.layer?.borderWidth = 3
 
         // Use cached image if available, skip re-capture entirely
@@ -73,7 +82,10 @@ final class HighlightOverlay {
             container.addSubview(imageView)
         } else {
             // Fallback: tinted background (no CGWindowListCreateImage)
-            container.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+            let fallbackTint: NSColor = useAccentTint
+                ? NSColor.controlAccentColor.withAlphaComponent(0.15)
+                : NSColor.white.withAlphaComponent(0.15)
+            container.layer?.backgroundColor = fallbackTint.cgColor
         }
 
         window.contentView = container
@@ -81,10 +93,11 @@ final class HighlightOverlay {
         window.alphaValue = 0
         window.orderFrontRegardless()
 
+        let targetAlpha = max(0, min(1, opacity))
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            window.animator().alphaValue = 0.85
+            window.animator().alphaValue = targetAlpha
         }
 
         overlayWindow = window

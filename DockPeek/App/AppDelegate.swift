@@ -934,7 +934,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             onHoverWindow: { [weak self] (win: WindowInfo?) in
                 guard let self else { return }
                 if let win {
-                    self.highlightOverlay.show(for: win, cachedImage: win.thumbnail)
+                    self.highlightOverlay.show(
+                        for: win,
+                        cachedImage: win.thumbnail,
+                        opacity: CGFloat(self.appState.previewOpacity),
+                        useAccentTint: self.appState.previewUseAccentTint
+                    )
                 } else {
                     self.highlightOverlay.hide()
                 }
