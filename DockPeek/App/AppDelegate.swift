@@ -26,7 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private static let activePollInterval: TimeInterval = 0.066 // ~15 Hz
     private static let hoverVelocityThreshold: CGFloat = 1200   // pt/s; faster = passing through, ignore
     private static let hoverFirstDelay: TimeInterval = 0.5      // first-hover dwell before showing
-    private static let hoverSwitchDelay: TimeInterval = 0.12    // dwell before switching to another app
     fileprivate var cachedDockRect: CGRect = .zero
     fileprivate var previewIsVisible = false {
         didSet { windowManager.isPreviewVisible = previewIsVisible }
@@ -543,14 +542,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             return
         }
 
-        // Dwell before (re)showing: short when switching while browsing, longer
-        // for a first hover. Reuse the open panel for switches.
-        let delay = wasVisible ? Self.hoverSwitchDelay : Self.hoverFirstDelay
-        let task = DispatchWorkItem { [weak self] in
-            self?.handleHoverPreview(for: pid, at: cgPoint, reuse: wasVisible)
+        // Already browsing → switch instantly. The panel is reused (Task 3), so
+        // the swap is flicker-free, and the velocity gate above already blocked
+        // fast passes — so an instant switch here only fires on a deliberate,
+        // settled move, giving a snappy Windows-like feel. First hover → dwell.
+        if wasVisible {
+            hoverTimer = nil
+            handleHoverPreview(for: pid, at: cgPoint, reuse: true)
+        } else {
+            let task = DispatchWorkItem { [weak self] in
+                self?.handleHoverPreview(for: pid, at: cgPoint, reuse: false)
+            }
+            hoverTimer = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverFirstDelay, execute: task)
         }
-        hoverTimer = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
     }
 
     /// Cached AX hit-test: returns cached result if same position within 100ms TTL
