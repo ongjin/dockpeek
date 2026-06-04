@@ -530,7 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         guard !windows.isEmpty else { return }
 
         dpLog("Hover preview: \(windows.count) window(s) for PID \(pid)")
-        showPreviewForWindows(windows, at: point)
+        showPreviewForWindows(windows, at: point, interactive: false)
     }
 
     // MARK: - Permission Monitor
@@ -595,7 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                         previewPanel.dismissPanel(animated: false)
                         lastHoveredBundleID = bundleID
                         DispatchQueue.main.async { [weak self] in
-                            self?.showPreviewForWindows(windows, at: point)
+                            self?.showPreviewForWindows(windows, at: point, interactive: true)
                         }
                     }
                     // Same app — just keep existing preview
@@ -661,7 +661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         dpLog("Will show preview for \(dockApp.name) (\(windows.count) windows)")
         lastHoveredBundleID = dockApp.bundleIdentifier ?? dockApp.name
         DispatchQueue.main.async { [weak self] in
-            self?.showPreviewForWindows(windows, at: point)
+            self?.showPreviewForWindows(windows, at: point, interactive: true)
         }
         return true
     }
@@ -852,7 +852,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     // MARK: - Preview
 
-    private func showPreviewForWindows(_ windows: [WindowInfo], at point: CGPoint) {
+    private func showPreviewForWindows(_ windows: [WindowInfo], at point: CGPoint, interactive: Bool) {
         previewIsVisible = true
         let thumbSize = CGFloat(appState.thumbnailSize)
 
@@ -899,6 +899,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             showTitles: true,
             backgroundOpacity: CGFloat(appState.previewOpacity),
             useAccentTint: appState.previewUseAccentTint,
+            grabsKeyboard: interactive,
             near: point,
             onSelect: { [weak self] win in
                 self?.highlightOverlay.hide()

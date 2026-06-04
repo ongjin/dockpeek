@@ -52,6 +52,7 @@ final class PreviewPanel: NSPanel {
         showTitles: Bool,
         backgroundOpacity: CGFloat,
         useAccentTint: Bool,
+        grabsKeyboard: Bool,
         near point: CGPoint,
         onSelect: @escaping (WindowInfo) -> Void,
         onClose: @escaping (WindowInfo) -> Void = { _ in },
@@ -100,7 +101,7 @@ final class PreviewPanel: NSPanel {
 
         alphaValue = 0
         orderFrontRegardless()
-        makeKey()
+        if grabsKeyboard { makeKey() }
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
