@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         setupCmdCommaShortcut()
         setupNewWindowObserver()
         setupScreenChangeObserver()
+        setupAppActivationObserver()
 
         applyDockAnchorSetting()
 
@@ -406,6 +407,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             self, selector: #selector(dockDidRelaunch(_:)),
             name: NSWorkspace.didLaunchApplicationNotification, object: nil
         )
+    }
+
+    private func setupAppActivationObserver() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(appDidActivate(_:)),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
+    }
+
+    @objc private func appDidActivate(_ note: Notification) {
+        guard previewPanel.isVisible else { return }
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        if app.bundleIdentifier == Bundle.main.bundleIdentifier { return }
+        dpLog("Another app activated (\(app.localizedName ?? "?")) — dismissing preview")
+        hoverTimer?.cancel(); hoverTimer = nil
+        hoverDismissTimer?.cancel(); hoverDismissTimer = nil
+        lastHoveredBundleID = nil
+        previewIsVisible = false
+        highlightOverlay.hide()
+        previewPanel.dismissPanel()
     }
 
     @objc private func screenDidChange() {

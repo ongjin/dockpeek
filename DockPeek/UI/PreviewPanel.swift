@@ -6,7 +6,7 @@ final class PreviewNavState: ObservableObject {
     func reset() { selectedIndex = -1 }
 }
 
-final class PreviewPanel: NSPanel {
+final class PreviewPanel: NSPanel, NSWindowDelegate {
 
     private var localMonitor: Any?
     private var globalMonitor: Any?
@@ -22,6 +22,7 @@ final class PreviewPanel: NSPanel {
     private var storedBackgroundOpacity: CGFloat = 0.9
     private var storedUseAccentTint = true
     private var dismissGeneration = 0
+    private var isDismissing = false
 
     init() {
         super.init(
@@ -39,6 +40,7 @@ final class PreviewPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isMovableByWindowBackground = false
         animationBehavior = .utilityWindow
+        delegate = self
     }
 
     override var canBecomeKey: Bool { true }
@@ -61,6 +63,7 @@ final class PreviewPanel: NSPanel {
         onHoverWindow: @escaping (WindowInfo?) -> Void = { _ in }
     ) {
         dismissGeneration &+= 1  // Invalidate any pending deferred cleanup
+        isDismissing = false
         storedWindows = windows
         storedOnSelect = onSelect
         storedOnClose = onClose
@@ -186,6 +189,7 @@ final class PreviewPanel: NSPanel {
 
     func dismissPanel(animated: Bool = true) {
         removeDismissMonitors()
+        isDismissing = true
         let gen = dismissGeneration
         if animated {
             NSAnimationContext.runAnimationGroup({ ctx in
@@ -193,21 +197,28 @@ final class PreviewPanel: NSPanel {
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 self.animator().alphaValue = 0
             }, completionHandler: {
-                // Skip cleanup if showPreview was called during the animation
                 guard self.dismissGeneration == gen else { return }
                 self.orderOut(nil)
+                self.isDismissing = false
                 self.alphaValue = 1
                 self.clearStoredState()
             })
         } else {
             orderOut(nil)
-            // Defer cleanup to let current call stack (e.g. onSelect gesture) complete.
-            // Skip if showPreview was called in between (generation changed).
+            isDismissing = false
             DispatchQueue.main.async {
                 guard self.dismissGeneration == gen else { return }
                 self.clearStoredState()
             }
         }
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        // A keyboard-grabbing (click) preview lost key focus — e.g. user opened
+        // our own Settings window. Dismiss it. Guarded against the re-entrant
+        // resignKey that our own orderOut() fires during teardown.
+        guard isVisible, !isDismissing else { return }
+        storedOnDismiss?()
     }
 
     private func clearStoredState() {
