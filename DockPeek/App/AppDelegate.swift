@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var currentPollInterval: TimeInterval = 0.25
     private static let idlePollInterval: TimeInterval = 0.25   // 4 Hz
     private static let activePollInterval: TimeInterval = 0.066 // ~15 Hz
+    private static let hoverVelocityThreshold: CGFloat = 1200   // pt/s; faster = passing through, ignore
+    private static let hoverFirstDelay: TimeInterval = 0.5      // first-hover dwell before showing
+    private static let hoverSwitchDelay: TimeInterval = 0.12    // dwell before switching to another app
     fileprivate var cachedDockRect: CGRect = .zero
     fileprivate var previewIsVisible = false {
         didSet { windowManager.isPreviewVisible = previewIsVisible }
@@ -331,6 +334,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             dpLog("Poll interval → \(desired)s")
         }
 
+        // Cursor speed (pt/s) from the previous sample — used to ignore fast passes.
+        var speed: CGFloat = 0
+        if let last = lastPollMouseLocation, currentPollInterval > 0 {
+            let dx = cgPoint.x - last.x
+            let dy = cgPoint.y - last.y
+            speed = (dx * dx + dy * dy).squareRoot() / CGFloat(currentPollInterval)
+        }
+
         // Skip processing if mouse hasn't moved and dock-area status unchanged
         if let lastLoc = lastPollMouseLocation,
            lastLoc.x == cgPoint.x, lastLoc.y == cgPoint.y,
@@ -342,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         // Only process when near dock or preview is visible
         if needsActive {
-            processHoverEvent(cgPoint: cgPoint)
+            processHoverEvent(cgPoint: cgPoint, speed: speed)
         }
     }
 
@@ -446,7 +457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     /// Called from the poll timer when mouse is near the dock or preview panel.
     /// Accepts pre-computed cgPoint to avoid redundant coordinate conversion.
-    fileprivate func processHoverEvent(cgPoint: CGPoint) {
+    fileprivate func processHoverEvent(cgPoint: CGPoint, speed: CGFloat) {
         // Convert CG point back to Cocoa for panel frame check
         let screenH = NSScreen.screens.first?.frame.height ?? 0
         let cocoaLoc = NSPoint(x: cgPoint.x, y: screenH - cgPoint.y)
@@ -502,6 +513,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         // Same app — keep existing timer/preview
         if bundleID == lastHoveredBundleID { return }
 
+        // Velocity gate: ignore fast passes over a different app (crossing the
+        // Dock). Clear lastHoveredBundleID so whatever app the cursor finally
+        // settles on is re-evaluated and armed afresh.
+        if speed > Self.hoverVelocityThreshold {
+            hoverTimer?.cancel()
+            hoverTimer = nil
+            // Only forget the app when no panel is up — while a preview is
+            // visible, lastHoveredBundleID must stay equal to the displayed app.
+            if !previewPanel.isVisible { lastHoveredBundleID = nil }
+            return
+        }
+
         // Different app — cancel old timer. Keep the current panel up so the
         // switch can swap content in place (no dismiss/re-fade).
         hoverTimer?.cancel()
@@ -520,16 +543,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             return
         }
 
-        // Switch in place when already browsing; fade in fresh after a delay otherwise.
-        if wasVisible {
-            handleHoverPreview(for: pid, at: cgPoint, reuse: true)
-        } else {
-            let task = DispatchWorkItem { [weak self] in
-                self?.handleHoverPreview(for: pid, at: cgPoint, reuse: false)
-            }
-            hoverTimer = task
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
+        // Dwell before (re)showing: short when switching while browsing, longer
+        // for a first hover. Reuse the open panel for switches.
+        let delay = wasVisible ? Self.hoverSwitchDelay : Self.hoverFirstDelay
+        let task = DispatchWorkItem { [weak self] in
+            self?.handleHoverPreview(for: pid, at: cgPoint, reuse: wasVisible)
         }
+        hoverTimer = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
     }
 
     /// Cached AX hit-test: returns cached result if same position within 100ms TTL
