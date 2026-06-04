@@ -40,6 +40,18 @@ make open      # generate 후 Xcode 로 열기
 - **새 `.swift` 파일 추가는 별도 등록 불필요**: `Makefile` 이 `find DockPeek -name '*.swift'` 로 전부 모아 컴파일한다. 파일을 `DockPeek/` 어디에 두든 자동 포함. (단 XcodeGen 으로 Xcode 빌드할 때만 `project.yml` 의 `sources` 규칙을 탄다.)
 - **단위 테스트 실행 명령 없음** — 위에 적었듯 테스트 자체가 없다. 행동 변경은 `make dev` 후 실제 동작으로 확인.
 
+### 배포 (Release) — "릴리스" 는 brew cask 까지 올리는 것
+
+`UpdateChecker` 가 GitHub Releases 를 폴링해 **기존 사용자 앱을 자동 업데이트**한다(설치 전 `codesign --verify` — self-signed 라도 valid 면 통과). 릴리스 = 즉시 전체 배포이므로 **`make dev` 로 동작 확인 후** 진행. 순서:
+
+1. **버전 bump** — `Makefile VERSION` + `Info.plist CFBundleShortVersionString` 동시 일치(`CFBundleVersion` 은 `1` 고정). 커밋 `Bump version to X.Y.Z`.
+2. **`make dist`** — release 빌드 → `DockPeek.zip` + sha256 출력(zip 은 gitignore).
+3. **push + `gh release create vX.Y.Z DockPeek.zip --title "vX.Y.Z" --notes "…"`** — 태그 `vX.Y.Z`, asset 이름은 반드시 `DockPeek.zip`. repo `ongjin/dockpeek`.
+4. **Homebrew cask 갱신** (릴리스의 실제 종착점): `github.com/zerry-lab/homebrew-tap` 의 `Casks/dockpeek.rb`. `url` 이 `…/v#{version}/DockPeek.zip` 템플릿이라 **`version`·`sha256` 두 줄만** 바꾼다(sha256 = `make dist` 출력값 = 업로드 asset 해시, 불일치 시 brew 설치 실패). 별도 repo 라 따로 커밋·푸시.
+
+- **함정 ①** cask 가 stale 되기 쉽다(2026-06 기준 1.5.13 에 멈춰 brew 사용자가 1.5.14~1.5.20 누락). **릴리스마다 cask 도 반드시 같이 올린다.**
+- **함정 ②** 개발 머신에서 `brew upgrade` 하면 `make dev` 번들이 통째로 교체돼 권한이 날아간다 — 코드는 같으니 그냥 둔다.
+
 ## Architecture
 
 핵심은 "전역 클릭을 가로채 Dock 클릭인지 판별하고, 해당 앱의 창들을 모아 미리보기를 띄우는" 파이프라인이다. 여러 파일에 걸쳐 있어 한 파일만 봐선 안 잡힌다.
