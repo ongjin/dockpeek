@@ -15,13 +15,14 @@ Pick the exact window you want — no more cycling through them all.
 - **Close from Preview** — Hit the X button on a thumbnail to close that window directly
 - **Keyboard Navigation** — Use arrow keys to select windows, Enter to activate, Esc to dismiss
 - **Window Snapping** — Snap windows to left half, right half, or full screen from the preview panel
-- **Settings GUI** — Proper settings window with tabs (General, Appearance, About), accessible via Cmd+, or menu bar
+- **Settings GUI** — Proper settings window with tabs (General, Dock, Update, About), accessible via Cmd+, or menu bar
 - **Korean / English** — In-app language switching between English and 한국어
 - **Force Primary Display** — New app windows always open on your primary monitor
 - **Anchor Dock to Primary Display** — Lock the Dock to your main monitor so it stops following the cursor to other screens (no Accessibility permission needed for this one)
+- **In-App Updates** — Check for new versions and upgrade automatically from the Update tab
 - **Launch at Login** — Start DockPeek automatically when you log in
 - **Safe Permission Handling** — Revoking accessibility permission won't freeze your system
-- **Configurable** — Adjust thumbnail size, toggle window titles, exclude specific apps
+- **Configurable** — Adjust thumbnail size, preview opacity, and accent tint; exclude specific apps by Bundle ID
 
 ## Install
 
@@ -82,23 +83,26 @@ DockPeek requires two system permissions:
 Click the menubar icon → **Settings...** (or press **Cmd+,**) to open the settings window.
 
 ### General
-- **Enable DockPeek** — Toggle the feature on/off
 - **Launch at login** — Start DockPeek automatically on login
-- **Force new windows to primary display** — New app windows always open on your main monitor
-- **Anchor dock to primary display** — Pin the Dock to the main monitor (restarts the Dock once when toggled)
 - **Language** — Switch between English and 한국어 (instant, no restart needed)
-- **Permission status** — See whether Accessibility permission is granted
-
-### Appearance
 - **Thumbnail size** — Adjust preview size (120–360px)
-- **Show window titles** — Display titles below thumbnails
-- **Live preview on hover** — Show overlay at the window's screen position on hover
+- **Preview appearance** — Preview opacity (50–90%) and an accent-color tint toggle for the hover highlight
+- **Excluded Apps** — Skip specific apps by Bundle ID
+- **Permissions** — Accessibility and Screen Recording status, plus a "Copy Diagnostics" button
+
+### Dock
+- **Anchor dock to primary display** — Pin the Dock to the main monitor (restarts the Dock once when toggled)
+- **Dock position** — Bottom / Left / Right (the edge the Dock anchors to)
+
+### Update
+- **Check for updates automatically** — Toggle background update checks
+- **Check interval** — Daily / Weekly / Manual
+- **Check Now** — Check manually, read the release notes, and install the update in-app
 
 ### About
-- App version info
+- App icon, name, and version
 - **Buy Me a Coffee** — Support development
 - **GitHub** link
-- **Excluded Apps** — Skip specific apps by Bundle ID
 
 ## How It Works
 
@@ -123,19 +127,22 @@ DockPeek/
 │   ├── EventTapManager.swift      # CGEventTap for global click interception
 │   ├── DockAXInspector.swift      # Accessibility hit-test for Dock icons
 │   ├── WindowManager.swift        # Window enumeration, thumbnails, activation
-│   └── AccessibilityManager.swift # Permission check & prompt
+│   ├── AccessibilityManager.swift # Permission check & prompt
+│   └── DockAnchorManager.swift    # Pin Dock to primary via com.apple.dock prefs
 ├── UI/
 │   ├── PreviewPanel.swift         # Floating NSPanel (non-activating)
 │   ├── PreviewContentView.swift   # SwiftUI thumbnail grid with close button
 │   ├── HighlightOverlay.swift     # Live preview overlay at window position
-│   ├── SettingsView.swift         # Settings window with tabs (General/Appearance/About)
+│   ├── SettingsView.swift         # Settings window with tabs (General/Dock/Update/About)
 │   └── OnboardingView.swift       # First-launch permission guide
 ├── Models/
 │   ├── WindowInfo.swift           # Window metadata + thumbnail
 │   └── DockApp.swift              # Dock icon → app mapping
 └── Utilities/
     ├── L10n.swift                 # Korean/English localization strings
-    └── DebugLog.swift             # Debug-only logging
+    ├── DebugLog.swift             # Debug-only logging
+    ├── DiagnosticChecker.swift    # Permission/environment diagnostics report
+    └── UpdateChecker.swift        # GitHub release check + in-app self-update
 ```
 
 ## Development
