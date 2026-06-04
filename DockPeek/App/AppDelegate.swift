@@ -502,31 +502,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         // Same app — keep existing timer/preview
         if bundleID == lastHoveredBundleID { return }
 
-        // Different app — cancel old timer and dismiss current preview
+        // Different app — cancel old timer. Keep the current panel up so the
+        // switch can swap content in place (no dismiss/re-fade).
         hoverTimer?.cancel()
         let wasVisible = previewPanel.isVisible
-        if wasVisible {
-            highlightOverlay.hide()
-            previewPanel.dismissPanel(animated: false)
-        }
+        if wasVisible { highlightOverlay.hide() }
         lastHoveredBundleID = bundleID
 
-        guard dockApp.isRunning, let pid = dockApp.pid else {
+        // New app can't produce a preview → drop the old panel and stop.
+        guard dockApp.isRunning, let pid = dockApp.pid,
+              !appState.isExcluded(bundleID: dockApp.bundleIdentifier) else {
             hoverTimer = nil
+            if wasVisible {
+                previewPanel.dismissPanel(animated: false)
+                previewIsVisible = false
+            }
             return
         }
 
-        if appState.isExcluded(bundleID: dockApp.bundleIdentifier) {
-            hoverTimer = nil
-            return
-        }
-
-        // Instant switch when already browsing, normal delay for first hover
+        // Switch in place when already browsing; fade in fresh after a delay otherwise.
         if wasVisible {
-            handleHoverPreview(for: pid, at: cgPoint)
+            handleHoverPreview(for: pid, at: cgPoint, reuse: true)
         } else {
             let task = DispatchWorkItem { [weak self] in
-                self?.handleHoverPreview(for: pid, at: cgPoint)
+                self?.handleHoverPreview(for: pid, at: cgPoint, reuse: false)
             }
             hoverTimer = task
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: task)
@@ -546,12 +545,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         return result
     }
 
-    private func handleHoverPreview(for pid: pid_t, at point: CGPoint) {
+    private func handleHoverPreview(for pid: pid_t, at point: CGPoint, reuse: Bool) {
         let windows = windowManager.windowsForApp(pid: pid)
-        guard !windows.isEmpty else { return }
+        guard !windows.isEmpty else {
+            // New app has no previewable windows — drop the lingering panel.
+            if reuse, previewPanel.isVisible {
+                highlightOverlay.hide()
+                previewPanel.dismissPanel(animated: false)
+                previewIsVisible = false
+            }
+            return
+        }
 
         dpLog("Hover preview: \(windows.count) window(s) for PID \(pid)")
-        showPreviewForWindows(windows, at: point, interactive: false)
+        showPreviewForWindows(windows, at: point, interactive: false, reuse: reuse)
     }
 
     // MARK: - Permission Monitor
@@ -873,7 +880,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     // MARK: - Preview
 
-    private func showPreviewForWindows(_ windows: [WindowInfo], at point: CGPoint, interactive: Bool) {
+    private func showPreviewForWindows(_ windows: [WindowInfo], at point: CGPoint, interactive: Bool, reuse: Bool = false) {
         previewIsVisible = true
         let thumbSize = CGFloat(appState.thumbnailSize)
 
@@ -921,6 +928,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             backgroundOpacity: CGFloat(appState.previewOpacity),
             useAccentTint: appState.previewUseAccentTint,
             grabsKeyboard: interactive,
+            reuse: reuse,
             near: point,
             onSelect: { [weak self] win in
                 self?.highlightOverlay.hide()

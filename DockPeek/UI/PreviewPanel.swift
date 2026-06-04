@@ -55,6 +55,7 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
         backgroundOpacity: CGFloat,
         useAccentTint: Bool,
         grabsKeyboard: Bool,
+        reuse: Bool = false,
         near point: CGPoint,
         onSelect: @escaping (WindowInfo) -> Void,
         onClose: @escaping (WindowInfo) -> Void = { _ in },
@@ -64,6 +65,7 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
     ) {
         dismissGeneration &+= 1  // Invalidate any pending deferred cleanup
         isDismissing = false
+        let isReusing = reuse && isVisible
         storedWindows = windows
         storedOnSelect = onSelect
         storedOnClose = onClose
@@ -89,23 +91,48 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
             onHoverWindow: onHoverWindow,
             navState: navState
         )
+        if isReusing, let existing = contentView as? NSHostingView<AnyView> {
+            // Reuse the live panel — swap content, no order-out, no re-fade.
+            existing.rootView = AnyView(content)
+            // NSHostingView.fittingSize lags one layout cycle behind a rootView
+            // swap, so defer the reframe by one runloop to size to the NEW
+            // content (window count can differ between apps).
+            let gen = dismissGeneration
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isVisible, self.dismissGeneration == gen else { return }
+                existing.layoutSubtreeIfNeeded()
+                let fitting = existing.fittingSize
+                let panelSize = NSSize(
+                    width: min(fitting.width, 800),
+                    height: min(fitting.height, 500)
+                )
+                let frame = self.calculateFrame(size: panelSize, nearPoint: point)
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.12
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    self.animator().setFrame(frame, display: true)
+                }
+            }
+            setupDismissMonitors(onDismiss: onDismiss)
+            return
+        }
+
         contentView = nil  // Release old hosting view before creating new one
         let hosting = NSHostingView(rootView: AnyView(content))
         contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
 
         let fitting = hosting.fittingSize
         let panelSize = NSSize(
             width: min(fitting.width, 800),
             height: min(fitting.height, 500)
         )
-
         let frame = calculateFrame(size: panelSize, nearPoint: point)
-        setFrame(frame, display: true)
 
+        setFrame(frame, display: true)
         alphaValue = 0
         orderFrontRegardless()
         if grabsKeyboard { makeKey() }
-
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
