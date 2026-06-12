@@ -323,7 +323,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         let inDock = cachedDockRect.contains(cgPoint)
         previewIsVisible = previewPanel.isVisible
-        let needsActive = inDock || previewIsVisible
+        // While a first-hover dwell is armed (panel not yet visible), keep polling
+        // active even off the Dock — otherwise leaving the Dock before the preview
+        // appears skips processHoverEvent, so the pending timer never gets cancelled
+        // and pops a preview for an app the cursor already left.
+        let needsActive = inDock || previewIsVisible || hoverTimer != nil
 
         // Adapt polling interval
         let desired = needsActive ? Self.activePollInterval : Self.idlePollInterval
@@ -476,6 +480,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             hoverTimer?.cancel()
             hoverTimer = nil
             if previewPanel.isVisible {
+                // Overshot above the preview's top edge → the user is clearly
+                // leaving; kill it instantly with no fade. The delayed dismiss
+                // below only covers leaving sideways or back toward the Dock,
+                // where the grace period helps cross the Dock↔panel gap.
+                if cocoaLoc.y >= previewPanel.frame.maxY {
+                    hoverDismissTimer?.cancel()
+                    hoverDismissTimer = nil
+                    lastHoveredBundleID = nil
+                    previewIsVisible = false
+                    highlightOverlay.hide()
+                    previewPanel.dismissPanel(animated: false)
+                    return
+                }
                 // Delayed dismiss — gives time to cross the gap to the preview panel
                 if hoverDismissTimer == nil {
                     let task = DispatchWorkItem { [weak self] in
