@@ -95,18 +95,27 @@ final class UpdateChecker: ObservableObject {
         upgradeState = .downloading(0)
 
         URLSession.shared.downloadTask(with: url) { [weak self] tempZip, response, error in
-            DispatchQueue.main.async {
-                guard let self else { return }
+            guard let self else { return }
 
-                guard let tempZip, error == nil else {
-                    self.upgradeState = .failed(error?.localizedDescription ?? "Download failed")
-                    return
-                }
-
-                self.upgradeState = .downloading(0.5)
-                self.installFromZip(tempZip)
+            guard let tempZip, error == nil else {
+                self.setUpgradeState(.failed(error?.localizedDescription ?? "Download failed"))
+                return
             }
+
+            // The URLSession completion runs on a background queue. Keep the
+            // blocking unzip/codesign/replace work here (OFF the main thread) so
+            // the UI doesn't freeze; installFromZip publishes state back to main.
+            // The downloaded temp file stays valid until this closure returns, so
+            // installFromZip must run synchronously here.
+            self.setUpgradeState(.downloading(0.5))
+            self.installFromZip(tempZip)
         }.resume()
+    }
+
+    /// Publish an UpgradeState change on the main thread. installFromZip runs on
+    /// a background queue, but @Published must be mutated on the main thread.
+    private func setUpgradeState(_ state: UpgradeState) {
+        DispatchQueue.main.async { self.upgradeState = state }
     }
 
     private func installFromZip(_ zipURL: URL) {
@@ -127,28 +136,28 @@ final class UpdateChecker: ObservableObject {
 
             guard unzip.terminationStatus == 0 else {
                 try? fm.removeItem(at: tempDir)
-                upgradeState = .failed("Failed to extract update")
+                setUpgradeState(.failed("Failed to extract update"))
                 return
             }
 
-            upgradeState = .downloading(0.7)
+            setUpgradeState(.downloading(0.7))
 
             // Find .app bundle
             let contents = try fm.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
             guard let appBundle = contents.first(where: { $0.pathExtension == "app" }) else {
                 try? fm.removeItem(at: tempDir)
-                upgradeState = .failed("No app found in archive")
+                setUpgradeState(.failed("No app found in archive"))
                 return
             }
 
             // Verify code signature
             guard verifyCodeSignature(of: appBundle) else {
                 try? fm.removeItem(at: tempDir)
-                upgradeState = .failed("Code signature verification failed")
+                setUpgradeState(.failed("Code signature verification failed"))
                 return
             }
 
-            upgradeState = .downloading(0.85)
+            setUpgradeState(.downloading(0.85))
 
             // Replace app: backup old → move new → cleanup
             let appPath = URL(fileURLWithPath: "/Applications/DockPeek.app")
@@ -165,19 +174,21 @@ final class UpdateChecker: ObservableObject {
             } catch {
                 if hasBackup { try? fm.moveItem(at: backupDir, to: appPath) }
                 try? fm.removeItem(at: tempDir)
-                upgradeState = .failed("Failed to install: \(error.localizedDescription)")
+                setUpgradeState(.failed("Failed to install: \(error.localizedDescription)"))
                 return
             }
 
             if hasBackup { try? fm.removeItem(at: backupDir) }
             try? fm.removeItem(at: tempDir)
 
-            upgradeState = .completed
-            updateAvailable = false
+            DispatchQueue.main.async {
+                self.upgradeState = .completed
+                self.updateAvailable = false
+            }
 
         } catch {
             try? fm.removeItem(at: tempDir)
-            upgradeState = .failed(error.localizedDescription)
+            setUpgradeState(.failed(error.localizedDescription))
         }
     }
 

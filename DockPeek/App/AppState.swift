@@ -2,7 +2,6 @@ import SwiftUI
 import Combine
 
 final class AppState: ObservableObject {
-    @AppStorage("isEnabled") var isEnabled = true
     @AppStorage("thumbnailSize") var thumbnailSize: Double = 200
     @AppStorage("launchAtLogin") var launchAtLogin = false
     @AppStorage("anchorDockToPrimary") var anchorDockToPrimary = false

@@ -249,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     }
 
     private func startAccessibilityPolling() {
+        guard accessibilityTimer == nil else { return }  // idempotent — may be re-armed from several paths
         accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) {
             [weak self] timer in
             guard let self else { timer.invalidate(); return }
@@ -623,11 +624,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 self.permissionMonitorTimer = nil
                 // Resume polling so we can restart when permission is re-granted
                 self.startAccessibilityPolling()
+            } else if !self.eventTapManager.isActive {
+                // Backstop: permission is present but the tap is down — an emergency
+                // stop (watchdog/callback) tore it down. The delegate callback
+                // normally re-arms recovery faster; this catches any missed signal.
+                dpLog("Event tap down while permission granted — restarting")
+                self.startEventTap()
             }
         }
     }
 
     // MARK: - EventTapManagerDelegate
+
+    func eventTapManagerDidLosePermission(_ manager: EventTapManager) {
+        // The tap was emergency-stopped because accessibility permission was lost.
+        // Switch to fast (2s) permission polling so the tap restarts promptly when
+        // permission returns — without this the tap stays down until app restart
+        // (the 30s monitor only re-arms recovery if it catches permission still off).
+        dpLog("Event tap lost permission — switching to accessibility polling")
+        stopHoverMonitor()
+        permissionMonitorTimer?.invalidate()
+        permissionMonitorTimer = nil
+        startAccessibilityPolling()
+    }
 
     func eventTapManager(_ manager: EventTapManager, didDetectClickAt point: CGPoint) -> Bool {
         // Cancel any pending hover timer on click
@@ -682,11 +701,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
                 }
             }
 
-            // Click is outside dock — dismiss and SUPPRESS
+            // Click is outside both the panel and the Dock — dismiss the preview
+            // and let the click reach its target (pass-through), matching the
+            // single-window Dock branch above. Reset previewIsVisible so the next
+            // hover-poll tick doesn't briefly treat stale state as a fresh hover.
             highlightOverlay.hide()
             previewPanel.dismissPanel(animated: false)
+            previewIsVisible = false
             lastHoveredBundleID = nil
-            return true
+            return false
         }
 
         // No preview visible — clear hover state
@@ -720,8 +743,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             warpCursorToPrimaryBriefly()
             return false
         }
-
-        guard windows.count >= 2 else { return false }
 
         // Suppress click and show preview asynchronously.
         // Record the clicked bundle BEFORE dispatching — the hover poll runs
@@ -851,9 +872,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             if AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) != .success {
                 var focusedRef: AnyObject?
                 AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &focusedRef)
-                guard let focused = focusedRef else { return }
-                let axFocused = focused as! AXUIElement
-                axWin = axFocused
+                guard let focused = focusedRef,
+                      CFGetTypeID(focused as CFTypeRef) == AXUIElementGetTypeID() else { return }
+                axWin = focused as! AXUIElement
             }
             moveAXWindowToPrimaryIfNeeded(axWin)
         }
@@ -911,9 +932,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private func moveAppWindowToPrimaryIfNeeded(axApp: AXUIElement) {
         var focusedRef: AnyObject?
         AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedRef)
-        guard let focusedVal = focusedRef else { return }
-        let win = focusedVal as! AXUIElement
-        moveAXWindowToPrimaryIfNeeded(win)
+        guard let focusedVal = focusedRef,
+              CFGetTypeID(focusedVal as CFTypeRef) == AXUIElementGetTypeID() else { return }
+        moveAXWindowToPrimaryIfNeeded(focusedVal as! AXUIElement)
     }
 
     private func removeAXObserver(pid: pid_t) {
@@ -1036,13 +1057,17 @@ private func moveAXWindowToPrimaryIfNeeded(_ axWindow: AXUIElement) {
     var posRef: AnyObject?
     AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &posRef)
     var pos = CGPoint.zero
-    if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+    if let p = posRef, CFGetTypeID(p as CFTypeRef) == AXValueGetTypeID() {
+        AXValueGetValue(p as! AXValue, .cgPoint, &pos)
+    }
     guard !primaryCG.contains(pos) else { return }
 
     var sizeRef: AnyObject?
     AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeRef)
     var sz = CGSize(width: 800, height: 600)
-    if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &sz) }
+    if let s = sizeRef, CFGetTypeID(s as CFTypeRef) == AXValueGetTypeID() {
+        AXValueGetValue(s as! AXValue, .cgSize, &sz)
+    }
 
     var newPos = CGPoint(
         x: vis.minX + (vis.width - sz.width) / 2,

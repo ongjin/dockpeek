@@ -1,8 +1,15 @@
 import Cocoa
+import os
 
 protocol EventTapManagerDelegate: AnyObject {
     /// Return true to suppress the event (prevent Dock from handling it).
     func eventTapManager(_ manager: EventTapManager, didDetectClickAt point: CGPoint) -> Bool
+    /// Called on the main thread after the tap was torn down because accessibility
+    /// permission was lost (the watchdog's emergency path). Lets the delegate switch
+    /// to permission polling so the tap restarts promptly when permission returns —
+    /// the emergency stop beats the slow 30s monitor, which would otherwise never
+    /// re-arm the recovery.
+    func eventTapManagerDidLosePermission(_ manager: EventTapManager)
 }
 
 final class EventTapManager {
@@ -14,6 +21,12 @@ final class EventTapManager {
         stop()
     }
 
+    // Serializes access to `eventTap`, which is read from the C tap callback
+    // (HID thread) and the background watchdog while stop() (main) nils it.
+    // Critical sections are a single pointer read/write — nanoseconds — and main
+    // holds the lock only inside start()/stop() (neither blocks), so the recovery
+    // path (emergencyInvalidateTap) is never contended during an input freeze.
+    private let lock = OSAllocatedUnfairLock()
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var permissionWatchdog: DispatchSourceTimer?
@@ -35,7 +48,9 @@ final class EventTapManager {
             return
         }
 
-        eventTap = tap
+        // Publish the tap under the lock BEFORE enabling it, so the callback
+        // thread sees the write (memory barrier) once events start flowing.
+        lock.withLock { eventTap = tap }
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
 
         if let source = runLoopSource {
@@ -53,7 +68,7 @@ final class EventTapManager {
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
-        eventTap = nil
+        lock.withLock { eventTap = nil }
         runLoopSource = nil
         isActive = false
         dpLog("Event tap stopped and invalidated")
@@ -62,10 +77,20 @@ final class EventTapManager {
     /// Immediately invalidate the mach port — safe to call from ANY thread.
     /// This is the critical operation that unblocks HID events when permission is revoked.
     fileprivate func emergencyInvalidateTap() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-        }
+        // Snapshot under the lock, then operate on the snapshot OUTSIDE the lock.
+        // The snapshot keeps the port alive even if stop() nils the property
+        // concurrently, and CFMachPortInvalidate is idempotent, so a double
+        // invalidation is harmless. The lock is released before the CG calls, so
+        // this stays non-blocking — the load-bearing requirement for the
+        // background watchdog's recovery path.
+        guard let tap = snapshotTap() else { return }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        CFMachPortInvalidate(tap)
+    }
+
+    /// Thread-safe snapshot of the live tap (or nil).
+    fileprivate func snapshotTap() -> CFMachPort? {
+        lock.withLock { eventTap }
     }
 
     // MARK: - Background Permission Watchdog
@@ -83,9 +108,12 @@ final class EventTapManager {
                 dpLog("Watchdog: permission lost — emergency tap invalidation")
                 // Invalidate from background thread to unblock HID events
                 self?.emergencyInvalidateTap()
-                // Let stop() on main thread handle watchdog cleanup (avoids race)
+                // Cleanup + recovery on main (avoids race). Notify the delegate so
+                // it can re-arm permission polling; the HID unblock above already
+                // happened, so this runs outside the freeze-critical path.
                 DispatchQueue.main.async {
                     self?.stop()
+                    if let self { self.delegate?.eventTapManagerDidLosePermission(self) }
                 }
             }
         }
@@ -126,7 +154,7 @@ private func eventTapCallback(
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         // Permission may have been revoked — check before re-enabling
         if AXIsProcessTrusted() {
-            if let tap = manager.eventTap {
+            if let tap = manager.snapshotTap() {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
             dpLog("Event tap re-enabled after system disable")

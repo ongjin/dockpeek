@@ -98,7 +98,7 @@ hover 경로는 event tap 과 별개로 `AppDelegate` 의 adaptive 폴링이 담
 - **self-signed → 백신 false-positive & Gatekeeper**: 정상이며 의도된 것. private API 를 들어내서 "고치려" 하지 말 것. → [private-apis.md](docs/claude/private-apis.md)
 - **Dock anchor 는 Dock 을 재시작(`killall Dock`)한다**: 토글/방향 변경 시 1회, idempotent. → [architecture.md](docs/claude/architecture.md)
 - **프리뷰 인터랙션 모델은 load-bearing**: hover 프리뷰는 키보드를 잡지 않는다(잡으면 타이핑 freeze 재발) + 좀비 프리뷰 방지 3중 + dwell/속도/오버슈트 dismiss 게이팅. → [preview-ux.md](docs/claude/preview-ux.md)
-- **README·`AppState.isEnabled` 미세 stale**: README 구조 트리/설정 목록이 약간 낡았고(`DockAnchorManager`/`UpdateChecker`/`DiagnosticChecker` 누락, "Force new windows to primary" 토글은 현재 UI 에 없음), `AppState.isEnabled` 는 선언만 있고 참조처 없는 dead flag 로 보인다. 코드를 진실의 원천으로.
+- **README 미세 stale**: README 구조 트리/설정 목록이 약간 낡았다(`DockAnchorManager`/`UpdateChecker`/`DiagnosticChecker` 누락, "Force new windows to primary" 토글은 현재 UI 에 없음). 코드를 진실의 원천으로.
 
 # 추가 문서 (docs/claude/)
 
