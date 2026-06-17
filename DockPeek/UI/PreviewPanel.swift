@@ -6,6 +6,16 @@ final class PreviewNavState: ObservableObject {
     func reset() { selectedIndex = -1 }
 }
 
+/// NSHostingView that actuates a click on its FIRST mouse-down even when its
+/// window is not key. The hover preview panel is non-activating and is never
+/// made key (see preview-ux.md — keying it during hover reintroduces the
+/// typing freeze), so by default macOS swallows the first click just to key the
+/// panel and the user has to click a window card twice. acceptsFirstMouse lets
+/// the tap fire immediately without grabbing the keyboard during passive hover.
+private final class FirstMouseHostingView: NSHostingView<AnyView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 final class PreviewPanel: NSPanel, NSWindowDelegate {
 
     private var localMonitor: Any?
@@ -118,7 +128,7 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
         }
 
         contentView = nil  // Release old hosting view before creating new one
-        let hosting = NSHostingView(rootView: AnyView(content))
+        let hosting = FirstMouseHostingView(rootView: AnyView(content))
         contentView = hosting
         hosting.layoutSubtreeIfNeeded()
 

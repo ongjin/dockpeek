@@ -8,7 +8,8 @@
 
 | 심볼 | 출처 | 용도 |
 |---|---|---|
-| `_SLPSSetFrontProcessWithOptions` | SkyLight (PrivateFramework, `dlopen`+`dlsym`) | **단일 창 활성화**. full-screen Space 전환까지 처리. **AltTab 과 동일 접근.** |
+| `_SLPSSetFrontProcessWithOptions` | SkyLight (PrivateFramework, `dlopen`+`dlsym`) | **창의 프로세스를 전면화**(opts `0x200` = `.userGenerated`). full-screen Space 전환까지 처리. |
+| `SLPSPostEventRecordTo` | SkyLight (`dlsym`, **underscore 없음**) | **특정 창을 key(키보드 포커스)로 전환** — `makeKeyWindow`. 위 `_SLPSSetFront…` 는 프로세스만 올리고 멀티창 앱에선 그 창을 key 로 안 만든다(올라오지만 포커스 안 잡힘). Hammerspoon/AltTab 의 byte-record 2개 트릭. **커서 이동·보이는 마우스 이벤트 없음**(no-cursor 원칙 준수). |
 | `_AXUIElementGetWindow` | ApplicationServices (`dlsym(dlopen(nil))`) | `AXUIElement` ↔ `CGWindowID` **100% 정확 매칭**. 대상 창 특정에 필수 |
 | `GetProcessForPID` | `@_silgen_name` | pid → `ProcessSerialNumber`(SLPS 호출에 필요) |
 | `CGWindowListCreateImage` | CoreGraphics (공개지만 **deprecated**) | 썸네일/오버레이 캡처 |
@@ -25,7 +26,7 @@ private let _slpsSetFront: SLPSSetFrontFn? = {
 
 ## 창 동작별 구현
 
-- **활성화** — `_SLPSSetFrontProcessWithOptions`(`GetPSNForPID` 로 얻은 PSN + `CGWindowID`) → AX raise → `kAXMainAttribute`/`kAXFocusedWindowAttribute` 순으로 시도.
+- **활성화** — AltTab 의 완전한 시퀀스: `_SLPSSetFrontProcessWithOptions`(PSN + `CGWindowID`, opts `0x200`) → `makeKeyWindow`(`SLPSPostEventRecordTo` 2회로 그 창을 key 로) → AX raise. **`makeKeyWindow` 가 핵심** — 빠지면 창은 올라오나 키보드 포커스가 안 잡힌다(과거 회귀). SkyLight 심볼이 없으면 공개 API fallback(AX raise + `kAXMain`/`kAXFocusedWindow` + `NSRunningApplication.activate()`). AX 매칭은 `_AXUIElementGetWindow`(100% 정확)·title·position+size 순.
 - **닫기** — AX close 버튼의 `kAXPressAction`.
 - **스냅** — AX `kAXPosition`/`kAXSize` 직접 설정(`SnapPosition` left/right/fill).
 - **캡처** — `CGWindowListCreateImage(.optionIncludingWindow, wid, [.boundsIgnoreFraming, .nominalResolution])`.

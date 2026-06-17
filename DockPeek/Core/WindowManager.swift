@@ -9,6 +9,33 @@ private let _slpsSetFront: SLPSSetFrontFn? = {
     return unsafeBitCast(sym, to: SLPSSetFrontFn.self)
 }()
 
+private typealias SLPSPostEventRecordToFn = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, UnsafeMutablePointer<UInt8>) -> CGError
+private let _slpsPostEventRecordTo: SLPSPostEventRecordToFn? = {
+    guard let handle = skylight, let sym = dlsym(handle, "SLPSPostEventRecordTo") else { return nil }
+    return unsafeBitCast(sym, to: SLPSPostEventRecordToFn.self)
+}()
+
+/// Make a specific window the key (keyboard-focused) window of its process.
+/// `_SLPSSetFrontProcessWithOptions` raises the process but does not transfer
+/// key status to a particular window in a multi-window app — so the clicked
+/// window comes forward yet stays unfocused. These two synthetic SkyLight event
+/// records (the Hammerspoon/AltTab sequence) transfer key focus to the window.
+/// Purely internal window-server IPC: no cursor movement, no visible events.
+private func makeKeyWindow(_ psn: inout ProcessSerialNumber, _ windowID: CGWindowID) {
+    guard let post = _slpsPostEventRecordTo else { return }
+    var wid = windowID
+    var bytes1 = [UInt8](repeating: 0, count: 0xf8)
+    bytes1[0x04] = 0xf8
+    bytes1[0x08] = 0x01
+    bytes1[0x3a] = 0x10
+    withUnsafeBytes(of: &wid) { memcpy(&bytes1[0x3c], $0.baseAddress!, MemoryLayout<UInt32>.size) }
+    memset(&bytes1[0x20], 0xff, 0x10)
+    var bytes2 = bytes1
+    bytes2[0x08] = 0x02
+    _ = post(&psn, &bytes1)
+    _ = post(&psn, &bytes2)
+}
+
 @_silgen_name("GetProcessForPID")
 @discardableResult
 private func GetPSNForPID(_ pid: pid_t, _ psn: inout ProcessSerialNumber) -> OSStatus
@@ -328,8 +355,12 @@ final class WindowManager {
                     AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeRef)
                     var pos = CGPoint.zero
                     var size = CGSize.zero
-                    if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
-                    if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+                    if let p = posRef, CFGetTypeID(p as CFTypeRef) == AXValueGetTypeID() {
+                        AXValueGetValue(p as! AXValue, .cgPoint, &pos)
+                    }
+                    if let s = sizeRef, CFGetTypeID(s as CFTypeRef) == AXValueGetTypeID() {
+                        AXValueGetValue(s as! AXValue, .cgSize, &size)
+                    }
                     if abs(tb.origin.x - pos.x) < 5, abs(tb.origin.y - pos.y) < 5,
                        abs(tb.width - size.width) < 5, abs(tb.height - size.height) < 5 {
                         targetAXWindow = axWindow
@@ -347,27 +378,26 @@ final class WindowManager {
 
         guard let axWindow = targetAXWindow else { return }
 
-        // 3. Activate: SkyLight first, then AX raise (AltTab's proven approach)
-        //    SkyLight handles both Space switching (full-screen) and single-window
-        //    activation (normal). AX raise after ensures the correct window is on top.
+        // 3. Activate (AltTab's full proven sequence):
+        //    SkyLight brings the process front (.userGenerated = 0x200),
+        //    makeKeyWindow transfers key/keyboard focus to THIS window, AX raise
+        //    puts it on top. _SLPSSetFront alone raises the window but leaves it
+        //    unfocused in multi-window apps — makeKeyWindow is the missing step.
         var psn = ProcessSerialNumber()
         GetPSNForPID(pid, &psn)
 
         if let slps = _slpsSetFront {
-            slps(&psn, UInt32(windowID), 0x2)
+            _ = slps(&psn, UInt32(windowID), 0x200)
+            makeKeyWindow(&psn, windowID)
+            AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)
         } else {
+            // No SkyLight — public-API fallback (AX focus + app activation).
+            AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)
+            AXUIElementSetAttributeValue(axWindow, kAXMainAttribute as CFString, kCFBooleanTrue)
+            let axApp = AXUIElementCreateApplication(pid)
+            AXUIElementSetAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, axWindow)
             app?.activate()
         }
-
-        AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)
-        AXUIElementSetAttributeValue(axWindow, kAXMainAttribute as CFString, kCFBooleanTrue)
-
-        // Set this window as the app's focused window so keyboard input goes to it
-        let axApp = AXUIElementCreateApplication(pid)
-        AXUIElementSetAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, axWindow)
-
-        // Ensure the app is frontmost with keyboard focus
-        app?.activate()
 
         dpLog("Activated window \(windowID) for PID \(pid)")
     }
@@ -386,7 +416,12 @@ final class WindowManager {
             dpLog("closeWindow: no close button for window \(windowID)")
             return
         }
-        // Safe: AXCloseButtonAttribute returns an AXUIElement
+        // Guard the type before force-casting — a misbehaving app could return
+        // a non-AXUIElement for the close-button attribute.
+        guard let closeRef, CFGetTypeID(closeRef as CFTypeRef) == AXUIElementGetTypeID() else {
+            dpLog("closeWindow: close button has unexpected type for window \(windowID)")
+            return
+        }
         let closeButton = closeRef as! AXUIElement
         AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
 
@@ -406,7 +441,9 @@ final class WindowManager {
         var posRef: AnyObject?
         AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &posRef)
         var currentPos = CGPoint.zero
-        if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &currentPos) }
+        if let p = posRef, CFGetTypeID(p as CFTypeRef) == AXValueGetTypeID() {
+            AXValueGetValue(p as! AXValue, .cgPoint, &currentPos)
+        }
 
         guard let primaryScreen = NSScreen.screens.first else { return }
         let primaryH = primaryScreen.frame.height
