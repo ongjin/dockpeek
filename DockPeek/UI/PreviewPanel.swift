@@ -34,6 +34,11 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
     private var dismissGeneration = 0
     private var isDismissing = false
 
+    /// Gap kept between the panel and the Dock edge it sits against.
+    private static let dockGap: CGFloat = 8
+    /// Gap kept between the panel and the other edges of the screen.
+    private static let screenMargin: CGFloat = 4
+
     init() {
         super.init(
             contentRect: .zero,
@@ -114,12 +119,7 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.isVisible, self.dismissGeneration == gen else { return }
                 existing.layoutSubtreeIfNeeded()
-                let fitting = existing.fittingSize
-                let panelSize = NSSize(
-                    width: min(fitting.width, 800),
-                    height: min(fitting.height, 500)
-                )
-                let frame = self.calculateFrame(size: panelSize, nearPoint: point)
+                let frame = self.calculateFrame(size: existing.fittingSize, nearPoint: point)
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = 0.12
                     ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -135,12 +135,10 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
         contentView = hosting
         hosting.layoutSubtreeIfNeeded()
 
-        let fitting = hosting.fittingSize
-        let panelSize = NSSize(
-            width: min(fitting.width, 800),
-            height: min(fitting.height, 500)
-        )
-        let frame = calculateFrame(size: panelSize, nearPoint: point)
+        // Position for the content's real size. The hosting view grows the window to fit its
+        // content regardless, so a capped size here only left wide panels off-centre and
+        // hanging past the screen edge.
+        let frame = calculateFrame(size: hosting.fittingSize, nearPoint: point)
 
         setFrame(frame, display: true)
         alphaValue = 0
@@ -285,6 +283,15 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
 
     // MARK: - Positioning
 
+    /// Thumbnail size to use for `count` cards near a Dock point: the preferred size, or smaller
+    /// when the row would otherwise run past the edges of that screen.
+    func fittedThumbnailSize(_ preferred: CGFloat, count: Int, near point: CGPoint) -> CGFloat {
+        guard let screen = screenForCGPoint(point) else { return preferred }
+
+        let available = screen.visibleFrame.width - Self.dockGap * 2
+        return PreviewMetrics.fittedThumbnailSize(preferred: preferred, count: count, available: available)
+    }
+
     private func calculateFrame(size: NSSize, nearPoint: CGPoint) -> NSRect {
         guard let screen = screenForCGPoint(nearPoint) else {
             return NSRect(origin: .zero, size: size)
@@ -302,16 +309,16 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
 
         switch dockPos {
         case .bottom:
-            origin = NSPoint(x: nearPoint.x - size.width / 2, y: screenFrame.minY + 8)
+            origin = NSPoint(x: nearPoint.x - size.width / 2, y: screenFrame.minY + Self.dockGap)
         case .left:
-            origin = NSPoint(x: screenFrame.minX + 8, y: nsY - size.height / 2)
+            origin = NSPoint(x: screenFrame.minX + Self.dockGap, y: nsY - size.height / 2)
         case .right:
-            origin = NSPoint(x: screenFrame.maxX - size.width - 8, y: nsY - size.height / 2)
+            origin = NSPoint(x: screenFrame.maxX - size.width - Self.dockGap, y: nsY - size.height / 2)
         }
 
         // Clamp to visible area
-        origin.x = max(screenFrame.minX + 4, min(origin.x, screenFrame.maxX - size.width - 4))
-        origin.y = max(screenFrame.minY + 4, min(origin.y, screenFrame.maxY - size.height - 4))
+        origin.x = max(screenFrame.minX + Self.screenMargin, min(origin.x, screenFrame.maxX - size.width - Self.screenMargin))
+        origin.y = max(screenFrame.minY + Self.screenMargin, min(origin.y, screenFrame.maxY - size.height - Self.screenMargin))
 
         return NSRect(origin: origin, size: size)
     }

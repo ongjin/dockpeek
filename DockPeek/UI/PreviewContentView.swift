@@ -1,5 +1,32 @@
 import SwiftUI
 
+/// Layout numbers shared by the card row and the code that sizes thumbnails to fit the screen.
+enum PreviewMetrics {
+    static let outerPadding: CGFloat = 16
+    static let cardPadding: CGFloat = 6
+    static let cardSpacing: CGFloat = 12
+    static let thumbnailAspect: CGFloat = 0.625
+    /// Below this a thumbnail stops being recognizable, so past it the row may overflow.
+    static let minThumbnailSize: CGFloat = 80
+
+    /// Width of a row of `count` cards.
+    static func rowWidth(count: Int, thumbnailSize: CGFloat) -> CGFloat {
+        let cards = CGFloat(count) * (thumbnailSize + cardPadding * 2)
+        let gaps = CGFloat(max(0, count - 1)) * cardSpacing
+        return cards + gaps + outerPadding * 2
+    }
+
+    /// The preferred thumbnail size, or the largest smaller one at which `count` cards fit in
+    /// `available` width. Without this a many-window app pushes cards off the screen.
+    static func fittedThumbnailSize(preferred: CGFloat, count: Int, available: CGFloat) -> CGFloat {
+        guard count > 0, rowWidth(count: count, thumbnailSize: preferred) > available else { return preferred }
+
+        let gaps = CGFloat(count - 1) * cardSpacing
+        let perCard = (available - outerPadding * 2 - gaps) / CGFloat(count) - cardPadding * 2
+        return min(preferred, max(minThumbnailSize, perCard.rounded(.down)))
+    }
+}
+
 struct PreviewContentView: View {
     let windows: [WindowInfo]
     let thumbnailSize: CGFloat
@@ -17,7 +44,7 @@ struct PreviewContentView: View {
     @State private var closeHoveredID: CGWindowID?
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: PreviewMetrics.cardSpacing) {
             ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                 windowCard(window, index: index)
             }
@@ -29,7 +56,7 @@ struct PreviewContentView: View {
                 onHoverWindow(nil)
             }
         }
-        .padding(16)
+        .padding(PreviewMetrics.outerPadding)
         .background(
             VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
                 .opacity(backgroundOpacity)
@@ -52,7 +79,7 @@ struct PreviewContentView: View {
 
         VStack(spacing: 4) {
             thumbnailView(w)
-                .frame(width: thumbnailSize, height: thumbnailSize * 0.625)
+                .frame(width: thumbnailSize, height: thumbnailSize * PreviewMetrics.thumbnailAspect)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -115,7 +142,7 @@ struct PreviewContentView: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding(6)
+        .padding(PreviewMetrics.cardPadding)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(highlighted ? Color.white.opacity(0.1) : Color.clear)

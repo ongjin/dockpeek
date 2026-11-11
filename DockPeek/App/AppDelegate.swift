@@ -940,7 +940,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     private func showPreviewForWindows(_ windows: [WindowInfo], at point: CGPoint, interactive: Bool, reuse: Bool = false) {
         previewIsVisible = true
-        let thumbSize = CGFloat(appState.thumbnailSize)
+        // Many windows at the preferred size would not fit across the screen — shrink to fit.
+        let thumbSize = previewPanel.fittedThumbnailSize(
+            CGFloat(appState.thumbnailSize), count: windows.count, near: point
+        )
 
         // Cache hits render immediately; misses are captured off the main thread
         // and merged into the panel when ready.
