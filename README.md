@@ -152,6 +152,8 @@ make setup      # First time: build → install to /Applications → launch
 make dev        # Dev loop: swap binary in-place (permissions preserved)
 make kill       # Stop running DockPeek
 make dist       # Build release zip for distribution
+make test       # Headless checks for pure logic
+make e2e        # End-to-end check that drives the real cursor (hands off while it runs)
 make clean      # Remove build artifacts
 ```
 

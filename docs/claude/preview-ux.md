@@ -50,7 +50,24 @@
 
 > 함정: `NSHostingView.fittingSize` 는 rootView 교체 직후 한 runloop 늦으므로, reframe 을 `DispatchQueue.main.async`(+`isVisible`/`dismissGeneration` 가드)로 미룬다. 이 지연을 없애면 첫 프레임이 잘못된 크기로 뜬다.
 
-## 검증 (수동)
+## 패널 크기: 화면 폭에 맞춘다
+
+`NSHostingView` 는 창을 **콘텐츠 크기로 다시 맞춘다**. 그래서 `setFrame` 에 다른 크기를 줘도 소용없고(예전 800×500 상한은 실제로 적용된 적이 없다), 패널 위치는 `fittingSize` 그대로 계산해야 가운데 정렬·화면 clamp 가 맞는다.
+
+카드 줄이 화면보다 넓어지지 않게 하는 건 썸네일 크기다. `showPreviewForWindows` 가 `PreviewPanel.fittedThumbnailSize(_:count:near:)` 로, 설정 크기에서 `count` 장이 그 화면의 visibleFrame 폭(양쪽 `dockGap` 제외)에 안 들어가면 들어가는 최대 크기로 줄인다(`PreviewMetrics.fittedThumbnailSize`, 하한 `minThumbnailSize` 80pt). 썸네일 캐시는 크기별로 따로 잡힌다.
+
+> 함정: 이 축소가 없으면 창 많은 앱의 카드가 화면 밖으로 나가 선택할 수 없다(창 12개가 2708pt 폭, x 949~3657 로 뜨던 실측). 카드 패딩·간격을 바꾸면 `PreviewMetrics` 한 곳만 고친다. `scripts/e2e.swift` 의 `Layout` 은 그 복사본이라 같이 맞춘다.
+
+## Dock 을 벗어나면 `lastHoveredBundleID` 를 지운다
+
+카드 선택(`onSelect`), Esc(`onDismiss`), 통과시키는 클릭은 프리뷰를 닫으면서 `lastHoveredBundleID` 를 **일부러 남긴다**. 커서가 아직 그 아이콘 위에 있을 때 프리뷰가 바로 되살아나지 않게 하려는 것이다.
+
+문제는 그 뒤다. 커서가 Dock 밖이고 프리뷰도 dwell 도 없으면 `needsActive` 가 false 라 `processHoverEvent` 가 안 돌고, 값이 영영 안 지워져 **그 앱은 다른 아이콘을 한 번 거치기 전까지 hover 프리뷰가 안 뜬다**. 그래서 `pollMousePosition` 이 `needsActive == false` 인 틱에서 직접 `nil` 로 지운다. 이 분기를 `if needsActive { … }` 로 되돌리지 말 것.
+
+## 검증
+
+자동: `make e2e`([verification.md](verification.md)). 아래는 손으로 볼 때의 목록이다.
+
 
 - 창 ≥2 앱에 0.5s 안에 잠깐 올렸다 Dock 밖으로 빼기 → 잔상 미리보기 안 뜸.
 - 미리보기 떠 있을 때 커서를 패널 **위로** → 잔상·fade 없이 즉시 사라짐.

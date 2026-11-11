@@ -23,7 +23,7 @@ DockPeek 의 "릴리스" 는 **GitHub Release zip 업로드 + Homebrew cask 갱�
 
 ## 사전 조건
 
-- `make dev` 로 변경 동작을 실제 확인 완료.
+- `make test` 통과, 그리고 **배포할 릴리스 빌드**로 `make e2e` 통과([verification.md](verification.md) 의 "릴리스 빌드를 검증하려면"). `make dev` 로 손으로 본 것만으론 부족하다.
 - 깨끗한 working tree(또는 의도한 변경만 커밋됨).
 - `gh` 가 `ongjin` 계정으로 인증됨(`gh auth status`).
 - `zerry-lab/homebrew-tap` 이 로컬에 체크아웃돼 있음(보통 `../homebrew-tap`).
@@ -56,7 +56,7 @@ make dist
 ```
 
 - `make release`(swiftc `-O -whole-module-optimization`) → `build/Release/DockPeek.app` 생성 + `SIGN_ID` 로 재서명.
-- `build/Release` 에서 `zip -r DockPeek.zip DockPeek.app` → **`DockPeek.zip`** (레포 루트, **gitignore 됨**).
+- 예전 `DockPeek.zip` 을 먼저 지운 뒤 `build/Release` 에서 `zip -r DockPeek.zip DockPeek.app` → **`DockPeek.zip`** (레포 루트, **gitignore 됨**). 지우지 않으면 `zip -r` 이 기존 아카이브를 갱신만 해서, 번들에서 빠진 파일이 zip 에 남고 사용자 쪽 `codesign --verify --strict` 가 깨질 수 있다.
 - 마지막 줄에 `shasum -a 256 DockPeek.zip` 출력 → **이 해시를 메모**(4단계 cask 에 들어간다).
 
 검증(선택이지만 권장):
@@ -131,7 +131,7 @@ gh release create v1.5.22 DockPeek.zip --repo ongjin/dockpeek --title "v1.5.22" 
 
 ## 체크리스트
 
-- [ ] `make dev` 로 동작 확인 완료
+- [ ] `make test` 통과, 릴리스 빌드로 `make e2e` 통과
 - [ ] `Makefile VERSION` == `Info.plist CFBundleShortVersionString` == `X.Y.Z`
 - [ ] `Bump version to X.Y.Z` 커밋
 - [ ] `make dist` → sha256 메모, 번들 버전·codesign 확인

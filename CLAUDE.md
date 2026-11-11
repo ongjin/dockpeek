@@ -21,7 +21,7 @@ macOS Dock 아이콘을 클릭하면 그 앱의 열린 창들을 썸네일로 �
 - **UI**: AppKit + SwiftUI 하이브리드. 진입점은 SwiftUI `App` 라이프사이클이 아니라 **수동 `NSApplication` 구동**(`DockPeekApp.swift`). 패널/오버레이는 AppKit `NSPanel`/`NSWindow`, 그 안 콘텐츠만 `NSHostingView` 로 SwiftUI.
 - **빌드 시스템**: **SwiftPM 도 Xcode 프로젝트도 레포에 없다.** `Makefile` 이 `swiftc` 를 직접 호출해 `.app` 번들을 손으로 조립한다. `project.yml` 은 *선택적* XcodeGen 용(`make generate`/`open`).
 - **권한**: 손쉬운 사용(Dock 클릭 감지 + 창 제어) + 화면 기록(썸네일 캡처). entitlements 는 빈 dict(샌드박스 미적용 — private API + system-wide tap).
-- **테스트/린트**: **없음.** 검증은 수동(권한 회수 테스트 등).
+- **테스트**: `make test`(순수 로직 검사) + `make e2e`(실제 커서로 도는 end-to-end). 린트는 없다. 권한 회수 검증은 여전히 수동. → [docs/claude/verification.md](docs/claude/verification.md)
 - **서명 ID**: `DockPeek Development`(로컬 self-signed). 배포 zip 도 같은 self-signed.
 
 ## Build & Commands
@@ -34,13 +34,15 @@ make build     # Debug 번들 (-Onone -g)
 make release   # Release 번들 (-O -whole-module-optimization)
 make run       # build 후 실행
 make dist      # release zip + sha256 (배포용)
+make test      # 순수 로직 검사 (권한·UI 불필요, 수 초)
+make e2e       # 실제 커서로 설치본을 검증 (손 떼고 실행, 옵션은 E2E_ARGS=…)
 make clean     # build/ DerivedData/ xcodeproj zip 삭제
 make generate  # XcodeGen 으로 .xcodeproj 생성 (xcodegen 필요)
 make open      # generate 후 Xcode 로 열기
 ```
 
 - **새 `.swift` 파일 추가는 별도 등록 불필요**: `Makefile` 이 `find DockPeek -name '*.swift'` 로 전부 모아 컴파일한다. `DockPeek/` 어디에 두든 자동 포함.(XcodeGen 빌드 때만 `project.yml` 의 `sources` 규칙을 탄다.)
-- **단위 테스트 실행 명령 없음** — 테스트 자체가 없다. 행동 변경은 `make dev` 후 실제 동작으로 확인.
+- **검증은 `make test` → `make dev` → `make e2e`**: 순수 함수는 `Tests/Checks.swift` 에 검사를 더하고, 프리뷰·hover·클릭 동작은 `make e2e` 로 확인한다(커서를 움직이므로 사용자에게 먼저 알리고, 손을 뗀 상태에서). 범위와 한계는 [docs/claude/verification.md](docs/claude/verification.md).
 - **릴리스**(버전 bump → `make dist` → GitHub Release → Homebrew cask)는 [docs/claude/release.md](docs/claude/release.md) 의 런북을 따른다.
 
 ## Architecture (개요)
@@ -69,6 +71,9 @@ DockPeek/
 ├── Utilities/                  # UpdateChecker, DiagnosticChecker, L10n, DebugLog
 ├── Info.plist                  # CFBundleShortVersionString (버전 bump 대상)
 └── DockPeek.entitlements       # 빈 dict (샌드박스 미적용)
+Tests/Checks.swift              # make test: 순수 로직 검사 (앱 번들에 안 들어감)
+scripts/e2e.swift               # make e2e: 커서를 움직이는 end-to-end 드라이버
+scripts/e2e-target.swift        # e2e 가 띄우는 stand-in 앱 (창 N개)
 ```
 
 핵심은 "전역 클릭을 가로채 Dock 클릭인지 판별하고, 해당 앱의 창들을 모아 미리보기를 띄우는" 파이프라인이다(오케스트레이터 `AppDelegate`). 여러 파일에 걸쳐 있어 한 파일만 봐선 안 잡힌다:
@@ -97,7 +102,7 @@ hover 경로는 event tap 과 별개로 `AppDelegate` 의 adaptive 폴링이 담
 - **`CGWindowListCreateImage` deprecated(macOS 14+)**: 지금은 동작하나 향후 ScreenCaptureKit 이관 필요. 배포 타깃을 15.0 이상으로 올리면 경고가 아니라 컴파일 오류가 된다. → [private-apis.md](docs/claude/private-apis.md)
 - **self-signed → 백신 false-positive & Gatekeeper**: 정상이며 의도된 것. private API 를 들어내서 "고치려" 하지 말 것. → [private-apis.md](docs/claude/private-apis.md)
 - **Dock anchor 는 Dock 을 재시작(`killall Dock`)한다**: 토글/방향 변경 시 1회, idempotent. → [architecture.md](docs/claude/architecture.md)
-- **프리뷰 인터랙션 모델은 load-bearing**: hover 프리뷰는 키보드를 잡지 않는다(잡으면 타이핑 freeze 재발) + 좀비 프리뷰 방지 3중 + dwell/속도/오버슈트 dismiss 게이팅. → [preview-ux.md](docs/claude/preview-ux.md)
+- **프리뷰 인터랙션 모델은 load-bearing**: hover 프리뷰는 키보드를 잡지 않는다(잡으면 타이핑 freeze 재발) + 좀비 프리뷰 방지 3중 + dwell/속도/오버슈트 dismiss 게이팅 + 카드 줄을 화면 폭에 맞추는 썸네일 축소 + Dock 을 벗어나면 `lastHoveredBundleID` 초기화. → [preview-ux.md](docs/claude/preview-ux.md)
 - **Dock 재시작은 알림으로 못 잡는다**: `NSWorkspace.didLaunchApplicationNotification` 은 Dock 같은 accessory 프로세스엔 오지 않는다. `DockAXInspector` 는 hit-test 전에 `NSRunningApplication.isTerminated` 로 Dock 교체를 감지해 AX 참조를 다시 잡는다 — 이 확인을 빼면 Dock 재시작(우리 Dock anchor 토글 포함) 뒤 프리뷰가 앱 재시작 전까지 전부 죽는다. → [architecture.md](docs/claude/architecture.md)
 - **썸네일 캐시는 축소본만**: 창 원본 캡처를 캐시에 넣지 말 것(창당 2~15MB 가 그대로 상주한다). 원본이 필요한 건 `HighlightOverlay` 한 장뿐이고 `captureFullImage` 로 그때그때 받는다. → [architecture.md](docs/claude/architecture.md)
 - **README 의 "Force Primary Display"**: 설정 토글 없이 always-on 인 기능이다(`AppDelegate.appDidLaunch`). 새로 **실행된** 앱의 첫 창만 뜬 뒤에 primary 로 옮긴다 — 이미 실행 중인 앱이 새로 여는 창은 대상이 아니다. 코드를 진실의 원천으로.
@@ -114,4 +119,5 @@ hover 경로는 event tap 과 별개로 `AppDelegate` 의 adaptive 폴링이 담
 - [docs/claude/event-tap-safety.md](docs/claude/event-tap-safety.md) — **입력 freeze 방지**(load-bearing). session-level `CGEventTap` 의 위험, 3중 방어(background watchdog 0.5s·C 콜백 재확인·30s monitor), `emergencyInvalidateTap` 스레드 안전성, 검증 절차. event tap 코드 만지기 전 필독.
 - [docs/claude/architecture.md](docs/claude/architecture.md) — **클릭/hover→미리보기 파이프라인**. 파일 교차 흐름, 수동 `NSApplication` 구동, hover 폴링, 좌표계(primary 높이) 함정, 캐싱 레이어, 창 enumeration 교차필터, Dock anchor 서브시스템, 보조 유틸. 흐름 따라가거나 새 단계 끼울 때.
 - [docs/claude/private-apis.md](docs/claude/private-apis.md) — **fragile 코어**. `WindowManager` 가 런타임 로드하는 private/deprecated API(SkyLight `_SLPSSetFront…`·`_AXUIElementGetWindow`·`GetProcessForPID`·`CGWindowListCreateImage`), 창 동작별 구현(활성화/닫기/스냅/캡처), enumeration 교차필터, AV false-positive 근거. 창 제어·캡처 만지거나 보안경고 답할 때.
+- [docs/claude/verification.md](docs/claude/verification.md) — **검증 도구**. `make test`(순수 로직)·`make e2e`(실제 커서, stand-in 앱 대상) 가 다루는 것과 못 다루는 것, 릴리스 빌드 검증 절차, 손 떼기·간섭 감지. 프리뷰 경로를 고쳤거나 릴리스 직전에.
 - [docs/claude/preview-ux.md](docs/claude/preview-ux.md) — **미리보기 인터랙션 모델**(load-bearing). hover 게이팅(속도/dwell/브라우징·active 폴링 게이트), dismiss 모델(위 오버슈트 즉시·옆아래 0.3s), hover non-key 원칙, 좀비 방지 3중, 패널 재사용 `fittingSize` 함정. 미리보기 등장/전환/dismiss·키보드 네비 만질 때.

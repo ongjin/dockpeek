@@ -34,8 +34,7 @@ CG(좌상단 원점) vs Cocoa(좌하단 원점) 변환이 도처에 있는데, *
 | `WindowManager` | thumbnailCache — **표시 크기로 축소한 비트맵**(렌더한 `maxSize` 태그 포함) | 5s (패널 열려있으면 10s, `isPreviewVisible`) |
 | `WindowManager` | windowListCache (`CGWindowListCopyWindowInfo` 결과) — 시스템 전체 목록이라 **단일 스냅샷**(pid 별 아님) | 0.5s |
 | `WindowManager` | axWindowIDsCache (pid 별) | 1s |
-| `AppDelegate` | cachedAXHitResult | 100ms TTL |
-| `AppDelegate` | cachedDockRect | 화면/Dock 변경 시 갱신(`updateCachedDockRect`) |
+| `AppDelegate` | cachedDockRect | 화면 파라미터 변경 시 갱신(`screenDidChange` → `updateCachedDockRect`). Dock 재시작 자체는 알림이 오지 않지만, Dock 위치·크기가 바뀌면 visibleFrame 이 바뀌어 이 경로를 탄다 |
 | `AppDelegate` | adaptive poll interval + "마우스 안 움직이면 skip" | — |
 
 **캐시 purge**: `WindowManager` 의 세 캐시는 프리뷰가 숨겨진 채 `cacheTTL`(5s) 동안 창 조회가 없으면 전부 비운다(`scheduleCachePurge` — `isPreviewVisible` 이 false 로 바뀔 때와 `windowsForApp` 호출마다 기한 갱신). idle 상태에선 캡처가 메모리에 남지 않는다. 썸네일 캡처·축소는 `loadThumbnails` 가 백그라운드에서 하고 메인에선 캐시 저장과 패널 병합만 한다.
