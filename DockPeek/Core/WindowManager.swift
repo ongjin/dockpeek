@@ -28,7 +28,7 @@ private func makeKeyWindow(_ psn: inout ProcessSerialNumber, _ windowID: CGWindo
     bytes1[0x04] = 0xf8
     bytes1[0x08] = 0x01
     bytes1[0x3a] = 0x10
-    withUnsafeBytes(of: &wid) { memcpy(&bytes1[0x3c], $0.baseAddress!, MemoryLayout<UInt32>.size) }
+    _ = withUnsafeBytes(of: &wid) { memcpy(&bytes1[0x3c], $0.baseAddress!, MemoryLayout<UInt32>.size) }
     memset(&bytes1[0x20], 0xff, 0x10)
     var bytes2 = bytes1
     bytes2[0x08] = 0x02

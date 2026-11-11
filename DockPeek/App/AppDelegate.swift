@@ -41,10 +41,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var hoverDismissTimer: DispatchWorkItem?
     private var lastHoveredBundleID: String?
 
-    // AX hit-test cache: avoid redundant AX calls for same position within 100ms
-    private var cachedAXHitResult: (point: CGPoint, result: DockApp?, timestamp: Date)?
-    private let axHitCacheTTL: TimeInterval = 0.1
-
     // Mouse position tracking: skip processing when mouse hasn't moved
     private var lastPollMouseLocation: CGPoint?
     private var lastPollInDock = false
@@ -347,7 +343,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         lastHoveredBundleID = nil
         lastPollMouseLocation = nil
         lastPollInDock = false
-        cachedAXHitResult = nil
         previewIsVisible = false
     }
 
@@ -499,10 +494,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             self, selector: #selector(screenDidChange),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
         )
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(dockDidRelaunch(_:)),
-            name: NSWorkspace.didLaunchApplicationNotification, object: nil
-        )
     }
 
     private func setupAppActivationObserver() {
@@ -529,17 +520,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         updateCachedDockRect()
     }
 
-    /// Refresh cached Dock geometry when the Dock process respawns — its
-    /// orientation and autohide prefs are re-read from `com.apple.dock`
-    /// and the visible-frame layout may have changed.
-    @objc private func dockDidRelaunch(_ note: Notification) {
-        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              app.bundleIdentifier == "com.apple.dock" else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.updateCachedDockRect()
-        }
-    }
-
     /// Called from the poll timer when mouse is near the dock or preview panel.
     /// Accepts pre-computed cgPoint to avoid redundant coordinate conversion.
     fileprivate func processHoverEvent(cgPoint: CGPoint, speed: CGFloat) {
@@ -555,7 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         }
 
         let inDock = isPointInDockArea(cgPoint)
-        let dockApp = inDock ? cachedAppAtPoint(cgPoint) : nil
+        let dockApp = inDock ? dockInspector.appAtPoint(cgPoint) : nil
 
         // Mouse is outside both dock and preview panel
         if !inDock || dockApp == nil {
@@ -655,19 +635,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             hoverTimer = task
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverFirstDelay, execute: task)
         }
-    }
-
-    /// Cached AX hit-test: returns cached result if same position within 100ms TTL
-    private func cachedAppAtPoint(_ point: CGPoint) -> DockApp? {
-        let now = Date()
-        if let cached = cachedAXHitResult,
-           cached.point.x == point.x, cached.point.y == point.y,
-           now.timeIntervalSince(cached.timestamp) < axHitCacheTTL {
-            return cached.result
-        }
-        let result = dockInspector.appAtPoint(point)
-        cachedAXHitResult = (point: point, result: result, timestamp: now)
-        return result
     }
 
     private func handleHoverPreview(for pid: pid_t, at point: CGPoint, reuse: Bool) {
