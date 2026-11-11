@@ -432,9 +432,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         lastPollInDock = inDock
 
         // Only process when near dock or preview is visible
-        if needsActive {
-            processHoverEvent(cgPoint: cgPoint, speed: speed)
+        guard needsActive else {
+            // Nothing is hovered any more. Picking a window, Esc and pass-through clicks all
+            // close the preview but keep lastHoveredBundleID so it doesn't pop straight back;
+            // forget it once the cursor is away, or that app never previews on hover again
+            // until another icon happens to be crossed first.
+            lastHoveredBundleID = nil
+            return
         }
+        processHoverEvent(cgPoint: cgPoint, speed: speed)
     }
 
     fileprivate func updateCachedDockRect() {
