@@ -11,7 +11,7 @@ SIGN_ID     := DockPeek Development
 INSTALL_APP := /Applications/$(APP_NAME).app
 INSTALL_BIN := $(INSTALL_APP)/Contents/MacOS/$(APP_NAME)
 
-.PHONY: build release clean install dev run dist open generate setup kill
+.PHONY: build release clean install dev run dist open generate setup kill test e2e
 
 # ============================================================
 # DEVELOPMENT WORKFLOW (recommended)
@@ -91,6 +91,33 @@ install: release
 
 clean:
 	rm -rf build DerivedData DockPeek.xcodeproj $(APP_NAME).zip
+
+# --- Verification ---
+
+# Headless checks for pure logic: no permissions, no UI, no cursor.
+TEST_FILES := $(filter-out DockPeek/App/DockPeekApp.swift,$(SWIFT_FILES)) $(wildcard Tests/*.swift)
+
+test:
+	@mkdir -p build/Test
+	@swiftc $(SWIFT_FLAGS) -Onone -suppress-warnings -o build/Test/checks $(TEST_FILES)
+	@build/Test/checks
+
+# End-to-end check against the running /Applications build. It moves the real
+# cursor and clicks, so keep your hands off the mouse and keyboard while it runs.
+# By default it targets a stand-in app it launches itself, so clicks never land on your windows.
+#   make e2e                           full run
+#   make e2e E2E_ARGS=--hover-only     hover preview only: no clicks, no focus change
+#   make e2e E2E_ARGS=--plan           list the Dock apps and exit; sends no input
+#   make e2e E2E_ARGS=--dock-restart   full run, then restart the Dock too
+#   see scripts/e2e.swift for --windows=N and --app=NAME
+E2E_TARGET := build/e2e/DockPeekE2E.app
+
+e2e:
+	@mkdir -p $(E2E_TARGET)/Contents/MacOS
+	@swiftc -O -target $(TARGET) -o build/e2e/driver scripts/e2e.swift
+	@swiftc -O -target $(TARGET) -o $(E2E_TARGET)/Contents/MacOS/DockPeekE2E scripts/e2e-target.swift
+	@cp scripts/e2e-target.plist $(E2E_TARGET)/Contents/Info.plist
+	@build/e2e/driver build/e2e $(E2E_ARGS)
 
 # --- Xcode project (requires XcodeGen + Xcode.app) ---
 
