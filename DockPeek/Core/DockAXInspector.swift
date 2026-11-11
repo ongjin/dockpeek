@@ -3,6 +3,7 @@ import AppKit
 final class DockAXInspector {
 
     private var dockElement: AXUIElement?
+    private var dockApp: NSRunningApplication?
     private var dockPID: pid_t = 0
 
     init() { refreshDockReference() }
@@ -10,8 +11,11 @@ final class DockAXInspector {
     func refreshDockReference() {
         guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else {
             dpLog("Dock process not found")
+            dockApp = nil
+            dockElement = nil
             return
         }
+        dockApp = dock
         dockPID = dock.processIdentifier
         dockElement = AXUIElementCreateApplication(dockPID)
         dpLog("Dock AX reference created (PID: \(dockPID))")
@@ -20,6 +24,12 @@ final class DockAXInspector {
     /// Hit-test at a screen point (CG top-left coordinates). Returns a `DockApp` if
     /// the click lands on a running application's Dock icon.
     func appAtPoint(_ point: CGPoint) -> DockApp? {
+        // The Dock gets restarted (crash, `killall Dock`, our own Dock anchor) and
+        // comes back under a new PID, leaving the old AX reference dead. NSWorkspace
+        // launch notifications aren't delivered for accessory processes like the
+        // Dock, so check the process itself.
+        if dockApp?.isTerminated != false { refreshDockReference() }
+
         guard let dockElement else {
             dpLog("No Dock AX reference")
             return nil

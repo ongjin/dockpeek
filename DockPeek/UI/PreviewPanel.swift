@@ -74,8 +74,11 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
         onHoverWindow: @escaping (WindowInfo?) -> Void = { _ in }
     ) {
         dismissGeneration &+= 1  // Invalidate any pending deferred cleanup
+        // A panel mid fade-out still reports isVisible, but its alpha is heading
+        // to 0 — reusing it would leave an invisible panel that eats clicks.
+        // Take the fresh path instead, which fades in from 0 again.
+        let isReusing = reuse && isVisible && !isDismissing
         isDismissing = false
-        let isReusing = reuse && isVisible
         storedWindows = windows
         storedOnSelect = onSelect
         storedOnClose = onClose
@@ -152,14 +155,26 @@ final class PreviewPanel: NSPanel, NSWindowDelegate {
         setupDismissMonitors(onDismiss: onDismiss)
     }
 
-    /// Update thumbnails for windows already being displayed (e.g. after background generation)
-    func updateThumbnails(_ windows: [WindowInfo]) {
+    /// Merge late-arriving thumbnails into the cards currently displayed. Windows
+    /// that are no longer shown (card closed, or the panel moved on to another
+    /// app) are ignored, so a stale capture can't replace the current content.
+    func updateThumbnails(_ thumbnails: [CGWindowID: NSImage]) {
         guard isVisible,
               let onSelect = storedOnSelect,
               let onClose = storedOnClose,
               let onSnap = storedOnSnap,
               let onDismiss = storedOnDismiss,
               let onHoverWindow = storedOnHoverWindow else { return }
+
+        var windows = storedWindows
+        var changed = false
+        for i in windows.indices {
+            guard let thumbnail = thumbnails[windows[i].id] else { continue }
+            windows[i].thumbnail = thumbnail
+            changed = true
+        }
+        guard changed else { return }
+
         storedWindows = windows
         let content = PreviewContentView(
             windows: windows,

@@ -5,7 +5,8 @@ import AppKit
 final class HighlightOverlay {
 
     private var overlayWindow: NSWindow?
-    private var currentWindowID: CGWindowID?
+    private weak var imageView: NSImageView?
+    private(set) var currentWindowID: CGWindowID?
     private var isHiding = false
     private var overlayGeneration = 0
 
@@ -29,6 +30,7 @@ final class HighlightOverlay {
         }
 
         currentWindowID = windowInfo.id
+        imageView = nil
 
         let primaryH = NSScreen.screens.first?.frame.height ?? 0
         guard screenForCGRect(windowInfo.bounds, primaryH: primaryH) != nil else { return }
@@ -73,15 +75,17 @@ final class HighlightOverlay {
         container.layer?.borderColor = borderColor.cgColor
         container.layer?.borderWidth = 3
 
-        // Use cached image if available, skip re-capture entirely
-        if let cachedImage {
-            let imageView = NSImageView(frame: NSRect(origin: .zero, size: cocoaRect.size))
-            imageView.image = cachedImage
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            imageView.autoresizingMask = [.width, .height]
-            container.addSubview(imageView)
-        } else {
-            // Fallback: tinted background (no CGWindowListCreateImage)
+        // Start from the card thumbnail so the overlay appears instantly;
+        // updateImage() swaps in a full-size capture when one arrives.
+        let imageView = NSImageView(frame: NSRect(origin: .zero, size: cocoaRect.size))
+        imageView.image = cachedImage
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.autoresizingMask = [.width, .height]
+        container.addSubview(imageView)
+        self.imageView = imageView
+
+        if cachedImage == nil {
+            // No thumbnail yet: tinted background until the capture lands
             let fallbackTint: NSColor = useAccentTint
                 ? NSColor.controlAccentColor.withAlphaComponent(0.15)
                 : NSColor.white.withAlphaComponent(0.15)
@@ -101,6 +105,13 @@ final class HighlightOverlay {
         }
 
         overlayWindow = window
+    }
+
+    /// Replace the highlighted window's image with a sharper capture. Ignored if
+    /// the overlay has since moved to another window or been hidden.
+    func updateImage(_ image: NSImage, for windowID: CGWindowID) {
+        guard currentWindowID == windowID else { return }
+        imageView?.image = image
     }
 
     func hide() {

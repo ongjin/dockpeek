@@ -51,14 +51,28 @@ enum SnapPosition { case left, right, fill }
 
 final class WindowManager {
 
-    /// Thumbnail cache: windowID → (image, timestamp)
-    private var thumbnailCache: [CGWindowID: (NSImage, Date)] = [:]
+    /// A downscaled capture, tagged with the size it was rendered for so a
+    /// changed thumbnail-size setting doesn't reuse a bitmap of the wrong size.
+    private struct CachedThumbnail {
+        let image: NSImage
+        let maxSize: CGFloat
+        let timestamp: Date
+    }
+
+    /// Thumbnail cache keyed by window. Main thread only.
+    private var thumbnailCache: [CGWindowID: CachedThumbnail] = [:]
     private let cacheTTL: TimeInterval = 5.0
     private let extendedCacheTTL: TimeInterval = 10.0
-    private let maxCacheSize = 30
+    private var cachePurgeTask: DispatchWorkItem?
 
-    /// Whether preview panel is currently visible — set by AppDelegate to extend cache TTL
-    var isPreviewVisible = false
+    /// Whether preview panel is currently visible — set by AppDelegate to extend cache TTL.
+    /// Hiding the preview schedules a purge so captures don't stay in memory while idle.
+    var isPreviewVisible = false {
+        didSet {
+            guard oldValue, !isPreviewVisible else { return }
+            scheduleCachePurge()
+        }
+    }
 
     init() {
         loadWindowOrder()
@@ -84,8 +98,9 @@ final class WindowManager {
         UserDefaults.standard.set(serializable, forKey: windowOrderDefaultsKey)
     }
 
-    /// CGWindowListCopyWindowInfo result cache: pid → (result, timestamp)
-    private var windowListCache: [pid_t: ([[String: Any]], Date)] = [:]
+    /// Latest CGWindowListCopyWindowInfo snapshot. The list is system-wide, so one
+    /// entry serves every pid — keying it per pid kept a full copy per app forever.
+    private var windowListCache: (list: [[String: Any]], timestamp: Date)?
     private let windowListCacheTTL: TimeInterval = 0.5
 
     /// AX window IDs cache: pid → (ids, timestamp)
@@ -104,11 +119,13 @@ final class WindowManager {
     /// Cross-references CGWindow list with AXUIElement windows to filter out
     /// overlays, helper windows, and other non-standard windows (e.g. Chrome translation bar).
     func windowsForApp(pid: pid_t, includeMinimized: Bool = false) -> [WindowInfo] {
+        scheduleCachePurge()
+
         let list: [[String: Any]]
         let now = Date()
-        if let cached = windowListCache[pid],
-           now.timeIntervalSince(cached.1) < windowListCacheTTL {
-            list = cached.0
+        if let cached = windowListCache,
+           now.timeIntervalSince(cached.timestamp) < windowListCacheTTL {
+            list = cached.list
         } else {
             guard let fetched = CGWindowListCopyWindowInfo(
                 [.optionAll, .excludeDesktopElements], kCGNullWindowID
@@ -117,7 +134,7 @@ final class WindowManager {
                 return []
             }
             list = fetched
-            windowListCache[pid] = (fetched, now)
+            windowListCache = (fetched, now)
         }
 
         var windows: [WindowInfo] = []
@@ -228,52 +245,121 @@ final class WindowManager {
 
     // MARK: - Thumbnails
 
-    func thumbnail(for windowID: CGWindowID, maxSize: CGFloat = 200) -> NSImage? {
-        // Use extended TTL while preview panel is open to reduce redundant captures
-        let effectiveTTL = isPreviewVisible ? extendedCacheTTL : cacheTTL
+    /// Use extended TTL while preview panel is open to reduce redundant captures
+    private var thumbnailTTL: TimeInterval {
+        isPreviewVisible ? extendedCacheTTL : cacheTTL
+    }
 
-        // Check cache
-        if let cached = thumbnailCache[windowID],
-           Date().timeIntervalSince(cached.1) < effectiveTTL {
-            return cached.0
-        }
+    /// Fresh cached thumbnail for a window, if any. Main thread only.
+    func cachedThumbnail(for windowID: CGWindowID, maxSize: CGFloat) -> NSImage? {
+        guard let cached = thumbnailCache[windowID],
+              cached.maxSize == maxSize,
+              Date().timeIntervalSince(cached.timestamp) < thumbnailTTL else { return nil }
+        return cached.image
+    }
 
-        // Prune expired entries and enforce size limit
-        let now = Date()
-        if thumbnailCache.count > maxCacheSize {
-            thumbnailCache = thumbnailCache.filter { now.timeIntervalSince($0.value.1) < effectiveTTL }
-            // Still over limit — remove oldest entries
-            if thumbnailCache.count >= maxCacheSize {
-                let sorted = thumbnailCache.sorted { $0.value.1 < $1.value.1 }
-                for (id, _) in sorted.prefix(thumbnailCache.count - maxCacheSize + 1) {
-                    thumbnailCache.removeValue(forKey: id)
+    /// Capture and downscale thumbnails off the main thread, cache them, then
+    /// deliver the ones that succeeded on the main thread.
+    func loadThumbnails(
+        for windowIDs: [CGWindowID],
+        maxSize: CGFloat,
+        completion: @escaping ([CGWindowID: NSImage]) -> Void
+    ) {
+        let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var thumbnails: [CGWindowID: NSImage] = [:]
+            for windowID in windowIDs {
+                guard let capture = Self.captureImage(windowID: windowID) else {
+                    dpLog("Thumbnail capture failed for window \(windowID)")
+                    continue
                 }
+                thumbnails[windowID] = Self.downscale(capture, maxSize: maxSize, scale: scale)
+            }
+
+            let captured = thumbnails
+            DispatchQueue.main.async {
+                self?.storeThumbnails(captured, maxSize: maxSize)
+                completion(captured)
             }
         }
+    }
 
-        guard let cgImage = CGWindowListCreateImage(
+    /// Capture a window at full size for the highlight overlay. Not cached — the
+    /// overlay shows one window at a time and drops the image when it hides.
+    func captureFullImage(windowID: CGWindowID, completion: @escaping (NSImage?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let image = Self.captureImage(windowID: windowID).map {
+                NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height))
+            }
+            DispatchQueue.main.async { completion(image) }
+        }
+    }
+
+    /// Capture a window's contents at nominal (1x) resolution. Thread-safe.
+    private static func captureImage(windowID: CGWindowID) -> CGImage? {
+        CGWindowListCreateImage(
             .null, .optionIncludingWindow, windowID,
             [.boundsIgnoreFraming, .nominalResolution]
-        ) else {
-            dpLog("Thumbnail capture failed for window \(windowID)")
-            return nil
-        }
+        )
+    }
 
-        // Draw CGImage directly into scaled size — avoids intermediate full-size NSImage
-        let w = CGFloat(cgImage.width), h = CGFloat(cgImage.height)
+    /// Redraw a capture at thumbnail size so the cache holds small bitmaps instead
+    /// of pinning every window's full-size capture. Thread-safe.
+    static func downscale(_ image: CGImage, maxSize: CGFloat, scale: CGFloat) -> NSImage? {
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        guard w > 0, h > 0 else { return nil }
+
         let aspect = w / h
-        let scaled: NSSize = aspect > 1
+        let pointSize: NSSize = aspect > 1
             ? NSSize(width: maxSize, height: maxSize / aspect)
             : NSSize(width: maxSize * aspect, height: maxSize)
 
-        let result = NSImage(size: scaled, flipped: false) { rect in
-            guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            context.draw(cgImage, in: rect)
-            return true
+        // Never upscale: a window smaller than the thumbnail keeps its own pixels.
+        let ratio = min(1, pointSize.width * scale / w)
+        let pixelWidth = max(1, Int((w * ratio).rounded()))
+        let pixelHeight = max(1, Int((h * ratio).rounded()))
+
+        guard let context = CGContext(
+            data: nil, width: pixelWidth, height: pixelHeight,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else {
+            // Unsupported color space — keep the capture as-is rather than lose the thumbnail.
+            return NSImage(cgImage: image, size: pointSize)
+        }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
+
+        guard let scaled = context.makeImage() else { return nil }
+        return NSImage(cgImage: scaled, size: pointSize)
+    }
+
+    private func storeThumbnails(_ thumbnails: [CGWindowID: NSImage], maxSize: CGFloat) {
+        let now = Date()
+        let ttl = thumbnailTTL
+        thumbnailCache = thumbnailCache.filter { now.timeIntervalSince($0.value.timestamp) < ttl }
+        for (windowID, image) in thumbnails {
+            thumbnailCache[windowID] = CachedThumbnail(image: image, maxSize: maxSize, timestamp: now)
         }
 
-        thumbnailCache[windowID] = (result, now)
-        return result
+        // A capture that lands after the preview closed would otherwise linger.
+        if !isPreviewVisible { scheduleCachePurge() }
+    }
+
+    /// Drop every cache once the preview has been hidden for `cacheTTL` with no
+    /// further window queries. Each call pushes the deadline back.
+    private func scheduleCachePurge() {
+        cachePurgeTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, !self.isPreviewVisible else { return }
+            self.thumbnailCache.removeAll()
+            self.windowListCache = nil
+            self.axWindowIDsCache.removeAll()
+        }
+        cachePurgeTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + cacheTTL, execute: task)
     }
 
     // MARK: - AX Window Matching
@@ -426,7 +512,7 @@ final class WindowManager {
         AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
 
         // Invalidate caches so the next windowsForApp(pid:) sees the post-close state
-        windowListCache.removeValue(forKey: pid)
+        windowListCache = nil
         axWindowIDsCache.removeValue(forKey: pid)
 
         dpLog("Closed window \(windowID)")

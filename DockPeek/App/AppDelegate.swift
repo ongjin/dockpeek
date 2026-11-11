@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
     private let appState = AppState()
     private let eventTapManager = EventTapManager()
     private let dockInspector = DockAXInspector()
@@ -14,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private let dockAnchorManager = DockAnchorManager()
 
     private let updateChecker = UpdateChecker.shared
+    private static let updatePollInterval: TimeInterval = 6 * 60 * 60
+    private var updatePollTimer: Timer?
     private var lastClickTime: Date = .distantPast
     private let debounceInterval: TimeInterval = 0.3
     private var accessibilityTimer: Timer?
@@ -24,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     private var currentPollInterval: TimeInterval = 0.25
     private static let idlePollInterval: TimeInterval = 0.25   // 4 Hz
     private static let activePollInterval: TimeInterval = 0.066 // ~15 Hz
+    private static let asleepPollInterval: TimeInterval = 5     // displays off: only watch for wake
+    private var displaysAsleep = false
+    private var lastPollTime: TimeInterval = 0
     private static let hoverVelocityThreshold: CGFloat = 1200   // pt/s; faster = passing through, ignore
     private static let hoverFirstDelay: TimeInterval = 0.5      // first-hover dwell before showing
     fileprivate var cachedDockRect: CGRect = .zero
@@ -54,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         stopHoverMonitor()
         permissionMonitorTimer?.invalidate()
         accessibilityTimer?.invalidate()
+        updatePollTimer?.invalidate()
         if let m = cmdCommaMonitor { NSEvent.removeMonitor(m) }
 
         // Remove notification observers
@@ -72,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         setupNewWindowObserver()
         setupScreenChangeObserver()
         setupAppActivationObserver()
+        setupDisplaySleepObserver()
 
         applyDockAnchorSetting()
 
@@ -85,10 +93,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         }
 
         // Auto-check for updates (respects cooldown, interval, and user setting)
-        if appState.autoUpdateEnabled && appState.updateCheckInterval != "manual" {
-            updateChecker.check(force: false, intervalSetting: appState.updateCheckInterval) { [weak self] available in
-                if available { self?.notifyUpdateAvailable() }
-            }
+        autoCheckForUpdates { [weak self] in self?.notifyUpdateAvailable() }
+
+        // A menu bar app stays up for weeks, so keep checking while it runs.
+        // These checks are silent: a found update only marks the menu item.
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.updatePollInterval, repeats: true) {
+            [weak self] _ in
+            self?.autoCheckForUpdates()
+        }
+        timer.tolerance = Self.updatePollInterval / 10
+        updatePollTimer = timer
+    }
+
+    private func autoCheckForUpdates(onAvailable: @escaping () -> Void = {}) {
+        guard appState.autoUpdateEnabled, appState.updateCheckInterval != "manual" else { return }
+
+        updateChecker.check(force: false, intervalSetting: appState.updateCheckInterval) { available in
+            if available { onAvailable() }
         }
     }
 
@@ -216,10 +237,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
-        // Delay to allow any other windows to be checked
+        guard let window = notification.object as? NSWindow else { return }
+        let isSettings = window === settingsWindow
+        guard isSettings || window === onboardingWindow else { return }
+
+        // Delay to allow any other windows to be checked, and to drop our
+        // reference only after the close has finished — that frees the window
+        // and its SwiftUI hierarchy. The identity checks leave a window that was
+        // reopened in the meantime alone.
         DispatchQueue.main.async { [weak self] in
-            self?.restoreAccessoryPolicyIfNeeded()
+            guard let self else { return }
+            if self.settingsWindow === window { self.settingsWindow = nil }
+            if self.onboardingWindow === window { self.onboardingWindow = nil }
+            if isSettings { self.restoreAccessoryPolicyIfNeeded() }
         }
     }
 
@@ -241,11 +271,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         )
         window.title = "DockPeek Setup"
         window.center()
-        window.contentView = NSHostingView(rootView: OnboardingView(onDismiss: {
-            window.close()
+        // Owned by onboardingWindow and released in windowWillClose. The default
+        // release-on-close over-releases a window that ARC also owns, and a
+        // strong capture in onDismiss would keep window ↔ content view alive.
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.contentView = NSHostingView(rootView: OnboardingView(onDismiss: { [weak window] in
+            window?.close()
         }))
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
+        onboardingWindow = window
     }
 
     private func startAccessibilityPolling() {
@@ -291,7 +327,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         currentPollInterval = Self.idlePollInterval
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + currentPollInterval,
-                       repeating: currentPollInterval)
+                       repeating: currentPollInterval,
+                       leeway: Self.pollLeeway(for: currentPollInterval))
         timer.setEventHandler { [weak self] in
             self?.pollMousePosition()
         }
@@ -314,10 +351,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         previewIsVisible = false
     }
 
+    /// Active ticks drive hover gating and stay precise. Slower ticks only need to
+    /// notice the cursor arriving, so the system may coalesce them with other wakeups.
+    private static func pollLeeway(for interval: TimeInterval) -> DispatchTimeInterval {
+        guard interval > activePollInterval else { return .nanoseconds(0) }
+        return .milliseconds(Int(interval * 200))
+    }
+
+    private func setPollInterval(_ interval: TimeInterval) {
+        guard abs(currentPollInterval - interval) > 0.001 else { return }
+        currentPollInterval = interval
+        hoverPollTimer?.schedule(deadline: .now() + interval, repeating: interval,
+                                 leeway: Self.pollLeeway(for: interval))
+        dpLog("Poll interval → \(interval)s")
+    }
+
+    private func setupDisplaySleepObserver() {
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(self, selector: #selector(screensDidSleep),
+                           name: NSWorkspace.screensDidSleepNotification, object: nil)
+        center.addObserver(self, selector: #selector(screensDidWake),
+                           name: NSWorkspace.screensDidWakeNotification, object: nil)
+    }
+
+    /// Nobody can hover the Dock with the displays off — slow the poll right down
+    /// so a machine left on overnight isn't woken 4x/s for nothing.
+    @objc private func screensDidSleep() {
+        displaysAsleep = true
+        setPollInterval(Self.asleepPollInterval)
+    }
+
+    @objc private func screensDidWake() {
+        displaysAsleep = false
+        setPollInterval(Self.idlePollInterval)
+    }
+
     /// Lightweight poll: reads NSEvent.mouseLocation and checks dock proximity.
     /// Adapts timer interval based on whether mouse is near dock or preview is visible.
     /// Skips processing if mouse position and dock-area state haven't changed.
     private func pollMousePosition() {
+        // Displays off: keep ticking slowly rather than stopping, so a missed wake
+        // notification costs a few seconds instead of hover previews until relaunch.
+        if displaysAsleep {
+            guard CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
+            displaysAsleep = false
+        }
+
         let cocoaLoc = NSEvent.mouseLocation
         let screenH = NSScreen.screens.first?.frame.height ?? 0
         let cgPoint = CGPoint(x: cocoaLoc.x, y: screenH - cocoaLoc.y)
@@ -331,19 +410,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         let needsActive = inDock || previewIsVisible || hoverTimer != nil
 
         // Adapt polling interval
-        let desired = needsActive ? Self.activePollInterval : Self.idlePollInterval
-        if abs(currentPollInterval - desired) > 0.001 {
-            currentPollInterval = desired
-            hoverPollTimer?.schedule(deadline: .now() + desired, repeating: desired)
-            dpLog("Poll interval → \(desired)s")
-        }
+        setPollInterval(needsActive ? Self.activePollInterval : Self.idlePollInterval)
 
         // Cursor speed (pt/s) from the previous sample — used to ignore fast passes.
+        // Divided by the real time since the last tick: the nominal interval is
+        // wrong on the tick where the timer changes rate (it just switched, but
+        // the distance was covered at the old rate) and whenever a tick runs late.
+        let now = ProcessInfo.processInfo.systemUptime
+        let elapsed = now - lastPollTime
+        lastPollTime = now
+
         var speed: CGFloat = 0
-        if let last = lastPollMouseLocation, currentPollInterval > 0 {
+        if let last = lastPollMouseLocation, elapsed > 0 {
             let dx = cgPoint.x - last.x
             let dy = cgPoint.y - last.y
-            speed = (dx * dx + dy * dy).squareRoot() / CGFloat(currentPollInterval)
+            speed = (dx * dx + dy * dy).squareRoot() / CGFloat(elapsed)
         }
 
         // Skip processing if mouse hasn't moved and dock-area status unchanged
@@ -948,40 +1029,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         previewIsVisible = true
         let thumbSize = CGFloat(appState.thumbnailSize)
 
-        // Separate cache hits (synchronous) from cache misses (background)
+        // Cache hits render immediately; misses are captured off the main thread
+        // and merged into the panel when ready.
         var enriched = windows
-        var missIndices: [Int] = []
+        var missingIDs: [CGWindowID] = []
         for i in enriched.indices {
-            if let cached = windowManager.thumbnail(for: enriched[i].id, maxSize: thumbSize) {
+            if let cached = windowManager.cachedThumbnail(for: enriched[i].id, maxSize: thumbSize) {
                 enriched[i].thumbnail = cached
             } else {
-                missIndices.append(i)
+                missingIDs.append(enriched[i].id)
             }
         }
 
-        // Generate missing thumbnails in background, then update UI on main thread.
-        // CGWindowListCreateImage is the expensive call and is thread-safe.
-        // WindowManager.thumbnail() handles caching, so we call it on main after
-        // the background work primes the system (the OS caches the window bitmap).
-        if !missIndices.isEmpty {
-            let windowIDs = missIndices.map { enriched[$0].id }
-            DispatchQueue.global(qos: .userInitiated).async {
-                // Prime window captures in parallel — the OS caches these bitmaps
-                for wid in windowIDs {
-                    _ = CGWindowListCreateImage(
-                        .null, .optionIncludingWindow, wid,
-                        [.boundsIgnoreFraming, .nominalResolution]
-                    )
-                }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.previewIsVisible else { return }
-                    for i in missIndices {
-                        enriched[i].thumbnail = self.windowManager.thumbnail(
-                            for: enriched[i].id, maxSize: thumbSize
-                        )
-                    }
-                    self.previewPanel.updateThumbnails(enriched)
-                }
+        if !missingIDs.isEmpty {
+            windowManager.loadThumbnails(for: missingIDs, maxSize: thumbSize) { [weak self] thumbnails in
+                guard let self, self.previewIsVisible else { return }
+                self.previewPanel.updateThumbnails(thumbnails)
             }
         }
 
@@ -1027,15 +1090,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             },
             onHoverWindow: { [weak self] (win: WindowInfo?) in
                 guard let self else { return }
-                if let win {
-                    self.highlightOverlay.show(
-                        for: win,
-                        cachedImage: win.thumbnail,
-                        opacity: CGFloat(self.appState.previewOpacity),
-                        useAccentTint: self.appState.previewUseAccentTint
-                    )
-                } else {
+                guard let win else {
                     self.highlightOverlay.hide()
+                    return
+                }
+
+                let isNewTarget = self.highlightOverlay.currentWindowID != win.id
+                self.highlightOverlay.show(
+                    for: win,
+                    cachedImage: win.thumbnail,
+                    opacity: CGFloat(self.appState.previewOpacity),
+                    useAccentTint: self.appState.previewUseAccentTint
+                )
+                guard isNewTarget else { return }
+
+                // The thumbnail is card-sized; swap in a full-size capture once
+                // it's ready so the overlay isn't a blurry upscale.
+                self.windowManager.captureFullImage(windowID: win.id) { [weak self] image in
+                    guard let image else { return }
+                    self?.highlightOverlay.updateImage(image, for: win.id)
                 }
             }
         )
