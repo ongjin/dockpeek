@@ -13,7 +13,7 @@ DockPeek 의 "릴리스" 는 **GitHub Release zip 업로드 + Homebrew cask 갱�
 
 릴리스 절차를 이해하려면 사용자 쪽에서 무슨 일이 벌어지는지부터 알아야 한다.
 
-1. **폴링** — `https://api.github.com/repos/ongjin/dockpeek/releases/latest` 를 GET (기본 `daily`, 설정에서 `weekly` 가능). 태그(`v1.5.22`)에서 `v` 를 떼고 로컬 `CFBundleShortVersionString` 과 semver 비교(`compareVersions`).
+1. **폴링** — `https://api.github.com/repos/ongjin/dockpeek/releases/latest` 를 GET (기본 `daily`, 설정에서 `weekly` 가능). 앱 실행 시 1회, 그리고 실행 중 6시간마다 타이머가 같은 cooldown 을 거쳐 확인한다(실행 시 발견하면 설정 창을 띄우고, 타이머가 발견하면 메뉴의 ● 표시만 바꾼다). 태그(`v1.5.22`)에서 `v` 를 떼고 로컬 `CFBundleShortVersionString` 과 semver 비교(`compareVersions`).
 2. **다운로드/설치(`downloadAndInstall`)** — release asset zip 다운로드 → `/usr/bin/unzip -o` 로 temp 에 풀고 → **`codesign --verify --deep --strict` 로 검증**(`verifyCodeSignature`) → 통과하면 `/Applications/DockPeek.app` 교체 → `relaunchApp`(`sleep 0.5 && open /Applications/DockPeek.app` 후 현재 인스턴스 `terminate`).
 
 함의:

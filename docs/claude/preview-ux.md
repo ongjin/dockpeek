@@ -8,7 +8,7 @@
 
 미리보기를 띄울지 결정하는 게이트들:
 
-- **속도 게이트** (`hoverVelocityThreshold` 1200pt/s) — Dock 을 빠르게 가로지르는 패스는 무시. 속도는 `pollMousePosition` 에서 `lastPollMouseLocation` 갱신 *전* 에 계산하고, 게이트는 `lastHoveredBundleID` 변경 *전* 에 배치한다(순서가 중요).
+- **속도 게이트** (`hoverVelocityThreshold` 1200pt/s) — Dock 을 빠르게 가로지르는 패스는 무시. 속도는 `pollMousePosition` 에서 `lastPollMouseLocation` 갱신 *전* 에 계산하고, 게이트는 `lastHoveredBundleID` 변경 *전* 에 배치한다(순서가 중요). 나누는 시간은 명목 주기가 아니라 **직전 틱부터의 실측 경과**(`lastPollTime`)다 — 명목 주기로 나누면 idle→active 전환 틱에서 속도가 약 3.8배 부풀어 첫 hover 가 빠른 패스로 오판된다.
 - **첫 hover 0.5s dwell** (`hoverFirstDelay`) — 패널이 아직 없을 때 첫 등장은 `DispatchWorkItem`(`hoverTimer`)을 0.5s 뒤로 예약. 우발적 스침을 거른다.
 - **브라우징 중 전환은 즉시** — 패널이 이미 떠 있으면(`wasVisible`) dwell 없이 `handleHoverPreview(reuse:true)` 로 내용만 교체. 속도 게이트가 이미 빠른 패스를 막았으므로, 즉시 전환은 의도적인 settle 이동에만 발동 → Windows 식 snappy 감각.
 
@@ -43,6 +43,10 @@
 ## 앱 전환은 패널 재사용
 
 다른 Dock 앱으로 hover 가 옮겨가면 dismiss+재페이드 없이 `showPreview(reuse:)` 로 `rootView` 만 교체.
+
+> 함정: **fade-out 중인 패널은 재사용하지 않는다**(`isReusing = reuse && isVisible && !isDismissing`). 애니메이션 dismiss(0.12s) 동안에도 `isVisible` 은 true 라서, 그 사이 재사용하면 alpha 가 0 으로 끝나 보이지 않는 패널이 클릭을 가로챈다. 이 경우엔 새로 띄우는 경로(alpha 0 → fade-in)를 탄다.
+
+> 함정: 늦게 도착한 썸네일은 `updateThumbnails` 가 **창 ID 로 병합**한다. 목록을 통째로 교체하면 그 사이 다른 앱으로 넘어간 패널이 이전 앱 내용으로 덮이거나 닫은 카드가 되살아난다.
 
 > 함정: `NSHostingView.fittingSize` 는 rootView 교체 직후 한 runloop 늦으므로, reframe 을 `DispatchQueue.main.async`(+`isVisible`/`dismissGeneration` 가드)로 미룬다. 이 지연을 없애면 첫 프레임이 잘못된 크기로 뜬다.
 

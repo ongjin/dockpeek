@@ -8,12 +8,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Event tap 안전장치는 load-bearing — 절대 제거/약화 금지**: DockPeek 은 session-level `CGEventTap`(HID 레벨)을 잡는다. 실행 중 손쉬운 사용 권한이 회수되면 tap 이 모든 입력을 막아 **시스템 전체가 얼어붙을 수 있다**. 3중 방어(background watchdog · C 콜백 재확인 · 30s monitor)가 이를 막는다. event tap 코드를 만지기 전 반드시 [docs/claude/event-tap-safety.md](docs/claude/event-tap-safety.md) 를 읽고, 검증(앱 실행 중 권한 끄고 입력이 막히지 않는지)까지 한다.
 - **개발 중에는 `make dev` 로 hot-swap, 번들 재설치 금지**: 권한(손쉬운 사용/화면 기록)은 `/Applications/DockPeek.app` **번들에 귀속**된다. `make setup`·`make install`·`brew upgrade` 처럼 번들을 통째로 갈아끼우면 권한이 날아가 매번 재허용해야 한다. `make dev` 는 같은 번들 안에서 바이너리만 교체(+재서명)하므로 권한이 유지된다. 첫 설치만 `make setup`, 이후 반복은 `make dev`.
-- **버전 올릴 땐 두 곳을 같이**: `Makefile` 의 `VERSION` 과 `DockPeek/Info.plist` 의 `CFBundleShortVersionString` 가 일치해야 한다(둘 다 현재 `1.5.22`). swiftc 빌드는 `Info.plist` 를 그대로 복사하므로 `project.yml` 의 `MARKETING_VERSION`(`1.0.0`)은 stale 이며 안 쓰인다. 커밋 메시지 관례: `Bump version to X.Y.Z`. 전체 릴리스 절차는 [docs/claude/release.md](docs/claude/release.md).
+- **버전 올릴 땐 두 곳을 같이**: `Makefile` 의 `VERSION` 과 `DockPeek/Info.plist` 의 `CFBundleShortVersionString` 가 일치해야 한다(둘 다 현재 `1.5.23`). swiftc 빌드는 `Info.plist` 를 그대로 복사하므로 `project.yml` 의 `MARKETING_VERSION`(`1.0.0`)은 stale 이며 안 쓰인다. 커밋 메시지 관례: `Bump version to X.Y.Z`. 전체 릴리스 절차는 [docs/claude/release.md](docs/claude/release.md).
 - **커밋 메시지는 평범한 사람 스타일**: 이 레포 커밋엔 AI/Claude 언급·`Co-Authored-By`·생성 푸터 넣지 않는다.
 
 # DockPeek
 
-macOS Dock 아이콘을 클릭하면 그 앱의 열린 창들을 썸네일로 미리보기하고 원하는 창 하나만 골라 전면으로 가져오는 메뉴바 유틸리티(Windows 식 Dock peek). 메뉴바 전용(`LSUIElement`) 앱이고, 배포는 GitHub Releases zip + Homebrew cask(`zerry-lab/tap`). **self-signed**(Apple Developer ID 미서명)이라 Gatekeeper 경고와 일부 백신 false-positive 가 따라온다 — 의도된 트레이드오프([docs/claude/private-apis.md](docs/claude/private-apis.md)).
+macOS Dock 아이콘을 클릭하면 그 앱의 열린 창들을 썸네일로 미리보기하고 원하는 창 하나만 골라 전면으로 가져오는 메뉴바 유틸리티(Windows 식 Dock peek). 메뉴바 전용(`LSUIElement`) 앱이고, 배포는 GitHub Releases zip + Homebrew cask(`zerry-lab/tap`). 라이선스는 Apache-2.0(`LICENSE`). **self-signed**(Apple Developer ID 미서명)이라 Gatekeeper 경고와 일부 백신 false-positive 가 따라온다 — 의도된 트레이드오프([docs/claude/private-apis.md](docs/claude/private-apis.md)).
 
 ## Tech Stack
 
@@ -84,7 +84,7 @@ hover 경로는 event tap 과 별개로 `AppDelegate` 의 adaptive 폴링이 담
 - **빌드는 swiftc, SPM 아님**: 의존성 추가 불가 — 시스템 프레임워크(AppKit/SwiftUI/CoreGraphics/ApplicationServices/ServiceManagement)만.
 - **로컬라이즈는 `L10n.swift` 의 dict 에 직접**: 새 문자열은 `en`·`ko` **두 dict 모두**에 키 추가하고 `static var` 접근자 정의. 언어 전환은 `SettingsView` 가 `.id(langRefresh)` UUID 를 갈아 SwiftUI 뷰 강제 리프레시(재시작 불필요).
 - **설정은 `AppState` 의 `@AppStorage`**: 제외 앱 목록은 콤마 구분 문자열을 `Set<String>` 으로 캐시(`cachedExcludedBundleIDs`).
-- **디버그 로깅은 `dpLog()`**: DEBUG 는 `print`+`os.log`, release 는 `os.log` 만. subsystem `com.dockpeek.app`.
+- **디버그 로깅은 `dpLog()`**: subsystem `com.dockpeek.app`, `os.log` info 레벨. `Makefile` 은 `-D DEBUG` 를 넘기지 않으므로 `#if DEBUG`(`print` 병행) 분기는 swiftc 빌드에서 컴파일되지 않는다(XcodeGen Debug 구성에서만). 보는 법: `/usr/bin/log stream --level info --predicate 'subsystem == "com.dockpeek.app"'`(지난 기록은 `/usr/bin/log show --last 10m --info …`). zsh 에선 `log` 가 builtin 이라 **전체 경로로** 불러야 한다.
 - **메뉴바 앱 activation policy 토글**: 평소 `.accessory`, 설정/About 창 띄울 때만 `.regular` → 닫히면 `restoreAccessoryPolicyIfNeeded()`.
 - **이름 짓기**: 기존 유명 툴과 구현이 다르면 그 툴을 그대로 연상시키는 이름은 피한다.
 
@@ -98,7 +98,9 @@ hover 경로는 event tap 과 별개로 `AppDelegate` 의 adaptive 폴링이 담
 - **self-signed → 백신 false-positive & Gatekeeper**: 정상이며 의도된 것. private API 를 들어내서 "고치려" 하지 말 것. → [private-apis.md](docs/claude/private-apis.md)
 - **Dock anchor 는 Dock 을 재시작(`killall Dock`)한다**: 토글/방향 변경 시 1회, idempotent. → [architecture.md](docs/claude/architecture.md)
 - **프리뷰 인터랙션 모델은 load-bearing**: hover 프리뷰는 키보드를 잡지 않는다(잡으면 타이핑 freeze 재발) + 좀비 프리뷰 방지 3중 + dwell/속도/오버슈트 dismiss 게이팅. → [preview-ux.md](docs/claude/preview-ux.md)
-- **README 미세 stale**: README 구조 트리/설정 목록이 약간 낡았다(`DockAnchorManager`/`UpdateChecker`/`DiagnosticChecker` 누락, "Force new windows to primary" 토글은 현재 UI 에 없음). 코드를 진실의 원천으로.
+- **Dock 재시작은 알림으로 못 잡는다**: `NSWorkspace.didLaunchApplicationNotification` 은 Dock 같은 accessory 프로세스엔 오지 않는다. `DockAXInspector` 는 hit-test 전에 `NSRunningApplication.isTerminated` 로 Dock 교체를 감지해 AX 참조를 다시 잡는다 — 이 확인을 빼면 Dock 재시작(우리 Dock anchor 토글 포함) 뒤 프리뷰가 앱 재시작 전까지 전부 죽는다. → [architecture.md](docs/claude/architecture.md)
+- **썸네일 캐시는 축소본만**: 창 원본 캡처를 캐시에 넣지 말 것(창당 2~15MB 가 그대로 상주한다). 원본이 필요한 건 `HighlightOverlay` 한 장뿐이고 `captureFullImage` 로 그때그때 받는다. → [architecture.md](docs/claude/architecture.md)
+- **README 의 "Force Primary Display"**: 설정 토글 없이 always-on 인 기능이다(위 커서 warp wart 와 같은 기능). 코드를 진실의 원천으로.
 
 # 추가 문서 (docs/claude/)
 

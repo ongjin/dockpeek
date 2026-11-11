@@ -14,14 +14,14 @@ SwiftUI `App` 라이프사이클이 아니라 **수동 `NSApplication` 구동**�
 
 1. **`EventTapManager`** — `cgSessionEventTap` 으로 `leftMouseDown` 만 잡는다. C 콜백(`eventTapCallback`)이 권한·tap-disabled 를 점검한 뒤 delegate(`AppDelegate`)로 클릭 좌표 전달. delegate 가 `true` 를 반환하면 **이벤트를 삼켜** Dock 기본 동작(앱 전환)을 막는다. (안전장치는 [event-tap-safety.md](event-tap-safety.md).)
 2. **`AppDelegate`** — ① debounce(0.3s) → ② `isPointInDockArea()` **빠른 기하 판정**(AX 호출 없이 `screen.frame` vs `visibleFrame` gap 으로 Dock 영역인지) → ③ `DockAXInspector.appAtPoint()` AX hit-test → ④ `WindowManager.windowsForApp()` 로 창 개수 확인 → **창 ≥ 2 개면 클릭을 삼키고** `PreviewPanel` 표시, 1 개 이하면 통과시켜 Dock 기본 동작 유지.
-3. **`DockAXInspector`** — `com.apple.dock` 의 `AXUIElement` 에 `AXUIElementCopyElementAtPosition` 으로 hit-test → 부모로 올라가며 `AXDockItem` 찾고 `AXApplicationDockItem` 인지 확인 → `kAXURLAttribute` 에서 bundle ID, 거기서 `NSRunningApplication` → pid 해석(이름/AX 속성 fallback).
+3. **`DockAXInspector`** — `com.apple.dock` 의 `AXUIElement` 에 `AXUIElementCopyElementAtPosition` 으로 hit-test → 부모로 올라가며 `AXDockItem` 찾고 `AXApplicationDockItem` 인지 확인 → `kAXURLAttribute` 에서 bundle ID, 거기서 `NSRunningApplication` → pid 해석(이름/AX 속성 fallback). **Dock 재시작 자가 복구**: Dock 은 재시작되면 PID 가 바뀌어 옛 AX 참조가 죽는다. `appAtPoint` 가 매번 `dockApp.isTerminated` 를 확인해 참조를 다시 잡는다(`NSWorkspace` 실행 알림은 Dock 같은 accessory 프로세스엔 안 온다 — 알림 기반으로 바꾸지 말 것).
 4. **`WindowManager`** — 시스템에서 가장 fragile 하고 핵심. 창 enumeration·활성화·캡처. 상세는 [private-apis.md](private-apis.md).
 5. **`PreviewPanel`** (non-activating `NSPanel`, `.borderless + .nonactivatingPanel`, level `.popUpMenu`)가 `PreviewContentView`(SwiftUI 썸네일 그리드)를 호스팅. 키보드 네비(←→/Enter/Esc)는 panel 의 local event monitor 가 처리 — **클릭으로 띄운 프리뷰만** key. 콜백 5종(`onSelect`/`onClose`/`onSnap`/`onDismiss`/`onHoverWindow`)으로 `AppDelegate` 와 통신. 인터랙션 모델 상세는 [preview-ux.md](preview-ux.md).
-6. **`HighlightOverlay`** — 썸네일 hover 시 **실제 창 위치**에 반투명 borderless 윈도(캡처 이미지 + 강조 테두리)를 띄워 어느 창인지 알려준다.
+6. **`HighlightOverlay`** — 썸네일 hover 시 **실제 창 위치**에 반투명 borderless 윈도(캡처 이미지 + 강조 테두리)를 띄워 어느 창인지 알려준다. 카드 썸네일(축소본)로 즉시 띄운 뒤, `WindowManager.captureFullImage` 가 백그라운드에서 받은 원본 크기 캡처로 `updateImage` 교체한다(창 ID 가 그대로일 때만). 원본은 캐시하지 않고 오버레이가 사라지면 같이 해제된다.
 
 ## Hover 경로 (event tap 과 별개)
 
-`AppDelegate` 가 adaptive `DispatchSourceTimer`(`.main` 큐)로 `NSEvent.mouseLocation` 을 폴링한다(`pollMousePosition`). idle 4Hz(`idlePollInterval` 0.25s), Dock 근처/패널 표시 중/dwell 예약 중엔 ~15Hz(`activePollInterval` 0.066s)로 가속. 마우스가 안 움직이고 Dock-영역 상태도 그대로면 처리를 건너뛴다. hover 로도 클릭 없이 미리보기를 띄울 수 있다. 게이팅/dismiss 규칙은 [preview-ux.md](preview-ux.md).
+`AppDelegate` 가 adaptive `DispatchSourceTimer`(`.main` 큐)로 `NSEvent.mouseLocation` 을 폴링한다(`pollMousePosition`). idle 4Hz(`idlePollInterval` 0.25s), Dock 근처/패널 표시 중/dwell 예약 중엔 ~15Hz(`activePollInterval` 0.066s)로 가속. 마우스가 안 움직이고 Dock-영역 상태도 그대로면 처리를 건너뛴다. hover 로도 클릭 없이 미리보기를 띄울 수 있다. idle 틱에는 leeway(주기의 20%)를 줘 시스템이 wakeup 을 묶게 하고, active 틱은 leeway 0 으로 정밀하게 둔다. **디스플레이가 꺼지면**(`screensDidSleep`) 5s 주기(`asleepPollInterval`)로 늦추되 타이머를 멈추진 않는다 — 각 틱이 `CGDisplayIsAsleep` 을 직접 확인하므로 wake 알림을 놓쳐도 수 초 안에 복귀한다. 게이팅/dismiss 규칙은 [preview-ux.md](preview-ux.md).
 
 ## 좌표계 함정 (전반에 깔림)
 
@@ -31,12 +31,16 @@ CG(좌상단 원점) vs Cocoa(좌하단 원점) 변환이 도처에 있는데, *
 
 | 위치 | 캐시 | TTL |
 |---|---|---|
-| `WindowManager` | thumbnailCache | 5s (패널 열려있으면 10s, `isPreviewVisible`) |
-| `WindowManager` | windowListCache (`CGWindowListCopyWindowInfo` 결과) | 0.5s |
-| `WindowManager` | axWindowIDsCache | 1s |
+| `WindowManager` | thumbnailCache — **표시 크기로 축소한 비트맵**(렌더한 `maxSize` 태그 포함) | 5s (패널 열려있으면 10s, `isPreviewVisible`) |
+| `WindowManager` | windowListCache (`CGWindowListCopyWindowInfo` 결과) — 시스템 전체 목록이라 **단일 스냅샷**(pid 별 아님) | 0.5s |
+| `WindowManager` | axWindowIDsCache (pid 별) | 1s |
 | `AppDelegate` | cachedAXHitResult | 100ms TTL |
 | `AppDelegate` | cachedDockRect | 화면/Dock 변경 시 갱신(`updateCachedDockRect`) |
 | `AppDelegate` | adaptive poll interval + "마우스 안 움직이면 skip" | — |
+
+**캐시 purge**: `WindowManager` 의 세 캐시는 프리뷰가 숨겨진 채 `cacheTTL`(5s) 동안 창 조회가 없으면 전부 비운다(`scheduleCachePurge` — `isPreviewVisible` 이 false 로 바뀔 때와 `windowsForApp` 호출마다 기한 갱신). idle 상태에선 캡처가 메모리에 남지 않는다. 썸네일 캡처·축소는 `loadThumbnails` 가 백그라운드에서 하고 메인에선 캐시 저장과 패널 병합만 한다.
+
+> 함정: 캐시에 창 원본 캡처를 넣거나 창 목록을 pid 별로 보관하면 안 된다. 예전 구현이 그랬고, 33일 가동 인스턴스에서 딕셔너리 23,544개(21MB) + 원본 비트맵 약 46MB 가 상주했다.
 
 `windowOrderByBundle` 는 창 순서를 bundle ID 별로 UserDefaults 에 영속화해 미리보기 카드 순서를 안정화(앱 재시작 시 새 `CGWindowID` 라 자연 리셋).
 
@@ -50,7 +54,7 @@ CG(좌상단 원점) vs Cocoa(좌하단 원점) 변환이 도처에 있는데, *
 
 ## 보조 유틸
 
-- **`UpdateChecker`** — GitHub Releases 폴링 → in-app self-update. 상세는 [release.md](release.md).
+- **`UpdateChecker`** — GitHub Releases 폴링 → in-app self-update. 실행 시 1회 + 실행 중 6시간마다(`AppDelegate.updatePollTimer`, 조용히 메뉴 ● 표시만) 확인. 상세는 [release.md](release.md).
 - **`DiagnosticChecker`** — 권한/event tap/Dock AX/화면 정보 진단 텍스트(설정에서 복사).
 - **`L10n`** — 직접 만든 en/ko dict(`.strings`/`.lproj` 아님). 새 문자열은 두 dict 모두에 추가.
 - **`AppState`** — `@AppStorage` 설정 보관.

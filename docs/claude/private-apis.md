@@ -29,7 +29,7 @@ private let _slpsSetFront: SLPSSetFrontFn? = {
 - **활성화** — AltTab 의 완전한 시퀀스: `_SLPSSetFrontProcessWithOptions`(PSN + `CGWindowID`, opts `0x200`) → `makeKeyWindow`(`SLPSPostEventRecordTo` 2회로 그 창을 key 로) → AX raise. **`makeKeyWindow` 가 핵심** — 빠지면 창은 올라오나 키보드 포커스가 안 잡힌다(과거 회귀). SkyLight 심볼이 없으면 공개 API fallback(AX raise + `kAXMain`/`kAXFocusedWindow` + `NSRunningApplication.activate()`). AX 매칭은 `_AXUIElementGetWindow`(100% 정확)·title·position+size 순.
 - **닫기** — AX close 버튼의 `kAXPressAction`.
 - **스냅** — AX `kAXPosition`/`kAXSize` 직접 설정(`SnapPosition` left/right/fill).
-- **캡처** — `CGWindowListCreateImage(.optionIncludingWindow, wid, [.boundsIgnoreFraming, .nominalResolution])`.
+- **캡처** — `CGWindowListCreateImage(.optionIncludingWindow, wid, [.boundsIgnoreFraming, .nominalResolution])`. 호출부는 `captureImage` 한 곳뿐이고 항상 백그라운드 큐에서 돈다. 두 경로: `loadThumbnails`(캡처 → `downscale` 로 표시 크기 비트맵 → 캐시) 와 `captureFullImage`(오버레이용 원본, 캐시 안 함).
 
 ## 창 enumeration 교차 필터
 
