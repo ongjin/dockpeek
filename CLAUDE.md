@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Event tap 안전장치는 load-bearing — 절대 제거/약화 금지**: DockPeek 은 session-level `CGEventTap`(HID 레벨)을 잡는다. 실행 중 손쉬운 사용 권한이 회수되면 tap 이 모든 입력을 막아 **시스템 전체가 얼어붙을 수 있다**. 3중 방어(background watchdog · C 콜백 재확인 · 30s monitor)가 이를 막는다. event tap 코드를 만지기 전 반드시 [docs/claude/event-tap-safety.md](docs/claude/event-tap-safety.md) 를 읽고, 검증(앱 실행 중 권한 끄고 입력이 막히지 않는지)까지 한다.
 - **개발 중에는 `make dev` 로 hot-swap, 번들 재설치 금지**: 권한(손쉬운 사용/화면 기록)은 `/Applications/DockPeek.app` **번들에 귀속**된다. `make setup`·`make install`·`brew upgrade` 처럼 번들을 통째로 갈아끼우면 권한이 날아가 매번 재허용해야 한다. `make dev` 는 같은 번들 안에서 바이너리만 교체(+재서명)하므로 권한이 유지된다. 첫 설치만 `make setup`, 이후 반복은 `make dev`.
-- **버전 올릴 땐 두 곳을 같이**: `Makefile` 의 `VERSION` 과 `DockPeek/Info.plist` 의 `CFBundleShortVersionString` 가 일치해야 한다(둘 다 현재 `1.5.23`). swiftc 빌드는 `Info.plist` 를 그대로 복사하므로 `project.yml` 의 `MARKETING_VERSION`(`1.0.0`)은 stale 이며 안 쓰인다. 커밋 메시지 관례: `Bump version to X.Y.Z`. 전체 릴리스 절차는 [docs/claude/release.md](docs/claude/release.md).
+- **버전 올릴 땐 두 곳을 같이**: `Makefile` 의 `VERSION` 과 `DockPeek/Info.plist` 의 `CFBundleShortVersionString` 가 일치해야 한다(둘 다 현재 `1.5.24`). swiftc 빌드는 `Info.plist` 를 그대로 복사하므로 `project.yml` 의 `MARKETING_VERSION`(`1.0.0`)은 stale 이며 안 쓰인다. 커밋 메시지 관례: `Bump version to X.Y.Z`. 전체 릴리스 절차는 [docs/claude/release.md](docs/claude/release.md).
 - **커밋 메시지는 평범한 사람 스타일**: 이 레포 커밋엔 AI/Claude 언급·`Co-Authored-By`·생성 푸터 넣지 않는다.
 
 # DockPeek
