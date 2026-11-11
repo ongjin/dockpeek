@@ -45,6 +45,8 @@ private let _slpsSetFront: SLPSSetFrontFn? = {
 
 `CGWindowListCreateImage` 는 **macOS 14 부터 deprecated**(빌드 시 경고 1건 — 정상). 아직 동작하지만, 향후 OS 에서 끊기면 **ScreenCaptureKit 이관**이 필요하다.
 
+> **배포 타깃을 올리면 빌드가 깨진다.** 경고로 끝나는 건 타깃이 `arm64-apple-macos14.0` 이라서다. 같은 호출을 `macos15.0` 타깃으로 컴파일하면 `'CGWindowListCreateImage' is unavailable in macOS` **오류**가 난다(macOS 27 SDK 에서 확인). 런타임 심볼은 macOS 27 에도 남아 있어 14.0 타깃 빌드는 정상 캡처한다. `Makefile` 의 `TARGET` 을 15 이상으로 올리려면 이관이 먼저다.
+
 ## 백신 false-positive / Gatekeeper — 의도된 것
 
 system-wide `CGEventTap`(→ [event-tap-safety.md](event-tap-safety.md)) + private SkyLight API + **Apple Developer ID 미서명(self-signed)** 조합이 휴리스틱 스캐너를 자극한다.
