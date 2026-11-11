@@ -5,7 +5,7 @@
 Click any Dock icon to see thumbnail previews of all open windows for that app.
 Pick the exact window you want — no more cycling through them all.
 
-![macOS](https://img.shields.io/badge/macOS-14.0%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![macOS](https://img.shields.io/badge/macOS-14.0%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5-orange) ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 
 ## Features
 
@@ -163,4 +163,4 @@ make clean      # Remove build artifacts
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE)
