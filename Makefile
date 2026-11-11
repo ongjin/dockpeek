@@ -79,6 +79,7 @@ run: build
 	open build/Debug/$(APP_NAME).app
 
 dist: release
+	@rm -f $(APP_NAME).zip
 	cd build/Release && zip -r ../../$(APP_NAME).zip $(APP_NAME).app
 	@echo "Created $(APP_NAME).zip"
 	@shasum -a 256 $(APP_NAME).zip
