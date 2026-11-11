@@ -93,14 +93,14 @@ hover 경로는 event tap 과 별개로 `AppDelegate` 의 adaptive 폴링이 담
 - **권한 회수 시 입력 freeze**: 가장 위험한 회귀. → [event-tap-safety.md](docs/claude/event-tap-safety.md)
 - **`make dev` 안 쓰고 재설치/`brew upgrade` 하면 권한 날아감**: CRITICAL RULES 참고.
 - **좌표 변환은 primary 높이로만**: per-screen 높이로 바꾸면 멀티모니터에서 미리보기/오버레이 위치가 틀어진다. → [architecture.md](docs/claude/architecture.md)
-- **커서는 절대 움직이지 않는다 (load-bearing 원칙)**: `CGWarpMouseCursorPosition` 이나 보이는 synthetic 마우스 이벤트 금지. **현재 위반 1건** — "새 창을 primary 로" 기능이 `warpCursorToPrimaryBriefly()`(`AppDelegate.swift` 근처)에서 커서를 옮긴다(설정 토글 없는 always-on). 따라 할 패턴이 아니라 **걷어낼 wart** — Dock launch display 는 커서가 아니라 `CGMainDisplayID` 로 잡아야 한다(경험적 검증).
+- **커서는 절대 움직이지 않는다 (load-bearing 원칙)**: `CGWarpMouseCursorPosition` 이나 보이는 synthetic 마우스 이벤트 금지. 현재 코드에 위반은 없다 — 예전 "새 창을 primary 로" 기능이 Dock 클릭 때 커서를 primary 로 옮기던 `warpCursorToPrimaryBriefly()` 는 제거했다. **되살리지 말 것.** 새 창 배치는 `appDidLaunch` 의 AX 이동(창이 뜬 뒤 primary 로 옮김)만 쓴다. Dock launch display 도 커서가 아니라 `CGMainDisplayID` 로 잡아야 한다(경험적 검증).
 - **`CGWindowListCreateImage` deprecated(macOS 14+)**: 지금은 동작하나 향후 ScreenCaptureKit 이관 필요. → [private-apis.md](docs/claude/private-apis.md)
 - **self-signed → 백신 false-positive & Gatekeeper**: 정상이며 의도된 것. private API 를 들어내서 "고치려" 하지 말 것. → [private-apis.md](docs/claude/private-apis.md)
 - **Dock anchor 는 Dock 을 재시작(`killall Dock`)한다**: 토글/방향 변경 시 1회, idempotent. → [architecture.md](docs/claude/architecture.md)
 - **프리뷰 인터랙션 모델은 load-bearing**: hover 프리뷰는 키보드를 잡지 않는다(잡으면 타이핑 freeze 재발) + 좀비 프리뷰 방지 3중 + dwell/속도/오버슈트 dismiss 게이팅. → [preview-ux.md](docs/claude/preview-ux.md)
 - **Dock 재시작은 알림으로 못 잡는다**: `NSWorkspace.didLaunchApplicationNotification` 은 Dock 같은 accessory 프로세스엔 오지 않는다. `DockAXInspector` 는 hit-test 전에 `NSRunningApplication.isTerminated` 로 Dock 교체를 감지해 AX 참조를 다시 잡는다 — 이 확인을 빼면 Dock 재시작(우리 Dock anchor 토글 포함) 뒤 프리뷰가 앱 재시작 전까지 전부 죽는다. → [architecture.md](docs/claude/architecture.md)
 - **썸네일 캐시는 축소본만**: 창 원본 캡처를 캐시에 넣지 말 것(창당 2~15MB 가 그대로 상주한다). 원본이 필요한 건 `HighlightOverlay` 한 장뿐이고 `captureFullImage` 로 그때그때 받는다. → [architecture.md](docs/claude/architecture.md)
-- **README 의 "Force Primary Display"**: 설정 토글 없이 always-on 인 기능이다(위 커서 warp wart 와 같은 기능). 코드를 진실의 원천으로.
+- **README 의 "Force Primary Display"**: 설정 토글 없이 always-on 인 기능이다(`AppDelegate.appDidLaunch`). 새로 **실행된** 앱의 첫 창만 뜬 뒤에 primary 로 옮긴다 — 이미 실행 중인 앱이 새로 여는 창은 대상이 아니다. 코드를 진실의 원천으로.
 
 # 추가 문서 (docs/claude/)
 

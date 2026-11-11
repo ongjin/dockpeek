@@ -807,23 +807,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
         // Hit-test the Dock (AX call — only runs for Dock area clicks)
         guard let dockApp = dockInspector.appAtPoint(point) else { return false }
 
-        // App not running → Dock will launch it. Warp cursor to primary
-        // BEFORE the click reaches Dock so macOS natively places the window there.
-        guard dockApp.isRunning, let pid = dockApp.pid else {
-            warpCursorToPrimaryBriefly()
-            return false
-        }
+        // App not running → let the click through so the Dock launches it.
+        guard dockApp.isRunning, let pid = dockApp.pid else { return false }
         if appState.isExcluded(bundleID: dockApp.bundleIdentifier) { return false }
 
         // Count windows (fast — no thumbnails yet)
         let windows = windowManager.windowsForApp(pid: pid)
 
-        // Running app with < 2 windows: Dock click will create/activate a window.
-        // Warp cursor so the new window appears on primary.
-        if windows.count < 2 {
-            warpCursorToPrimaryBriefly()
-            return false
-        }
+        // Fewer than 2 windows: nothing to choose between, keep the Dock's default behavior.
+        if windows.count < 2 { return false }
 
         // Suppress click and show preview asynchronously.
         // Record the clicked bundle BEFORE dispatching — the hover poll runs
@@ -837,52 +829,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
             self?.showPreviewForWindows(windows, at: point, interactive: true)
         }
         return true
-    }
-
-    // MARK: - Cursor Warp (Primary Screen Enforcement)
-
-    private var cursorRestoreTask: DispatchWorkItem?
-
-    /// Warp cursor to primary screen center so macOS places the new window there.
-    /// Called BEFORE the click reaches the Dock — the window is created natively on primary.
-    /// Cursor is restored after the app window appears.
-    private func warpCursorToPrimaryBriefly() {
-        guard let primary = NSScreen.screens.first else { return }
-        let pH = primary.frame.height
-
-        // Save current position (Cocoa → CG)
-        let savedCocoa = NSEvent.mouseLocation
-        let savedCG = CGPoint(x: savedCocoa.x, y: pH - savedCocoa.y)
-        let primaryCenter = CGPoint(x: primary.frame.midX, y: pH / 2)
-
-        // Already on primary? Skip.
-        let primaryCG = CGRect(x: primary.frame.minX, y: pH - primary.frame.maxY,
-                               width: primary.frame.width, height: primary.frame.height)
-        if primaryCG.contains(savedCG) { return }
-
-        dpLog("Warping cursor to primary center for window placement")
-
-        // 1. Warp cursor position
-        CGWarpMouseCursorPosition(primaryCenter)
-
-        // 2. Post synthetic mouse-move event so macOS fully registers the new position.
-        //    CGWarpMouseCursorPosition alone may not update all internal tracking.
-        if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                                   mouseCursorPosition: primaryCenter, mouseButton: .left) {
-            moveEvent.post(tap: .cghidEventTap)
-        }
-
-        // Restore cursor after window has been placed
-        cursorRestoreTask?.cancel()
-        let task = DispatchWorkItem {
-            CGWarpMouseCursorPosition(savedCG)
-            if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                                          mouseCursorPosition: savedCG, mouseButton: .left) {
-                restoreEvent.post(tap: .cghidEventTap)
-            }
-        }
-        cursorRestoreTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: task)
     }
 
     // MARK: - Dock Area Detection
@@ -944,8 +890,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, EventTapManagerDelegat
 
         dpLog("appDidLaunch: \(app.localizedName ?? "?") pid=\(pid)")
 
-        // Backup: AXObserver for apps launched via Spotlight/Launchpad (not through Dock click).
-        // The primary strategy (cursor warp in event tap) handles Dock launches.
+        // Watch the newly launched app and move its first window to the primary
+        // screen once it appears. The cursor is never moved to steer placement.
         let callback: AXObserverCallback = { _, element, _, _ in
             // Try element as window first, fall back to focused window
             var axWin: AXUIElement = element
