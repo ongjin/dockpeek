@@ -286,6 +286,13 @@ func shot(_ region: CGRect, _ name: String) {
 
 // MARK: - Interference guard
 
+/// A locked screen parks the Dock below the display, so every hover would miss and read as a
+/// DockPeek failure.
+func screenLocked() -> Bool {
+    let session = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]
+    return session["CGSSessionScreenIsLocked"] != nil
+}
+
 func idleSeconds(_ types: [CGEventType]) -> TimeInterval {
     types.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? 0
 }
@@ -294,6 +301,8 @@ func idleSeconds(_ types: [CGEventType]) -> TimeInterval {
 /// reset the same clocks as real ones, so mouse use is detected by the cursor leaving the spot
 /// the last glide parked it; typing is detected by the key clock.
 func interference() -> String? {
+    if screenLocked() { return "the screen was locked" }
+
     if let parkedAt, hypot(cursor().x - parkedAt.x, cursor().y - parkedAt.y) > Guard.cursorTolerance {
         return "the cursor was moved to \(cursor())"
     }
@@ -309,6 +318,11 @@ func interference() -> String? {
 
 guard AXIsProcessTrusted() else {
     print("ABORT: this terminal is not trusted for Accessibility")
+    exit(2)
+}
+
+guard !screenLocked() else {
+    print("ABORT: the screen is locked; unlock it and run again")
     exit(2)
 }
 
